@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+             xmlns:flowable="http://flowable.org/bpmn"
+             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+             targetNamespace="http://myworkflow.com/process">
+  <process id="leave_approve" name="请假审批" isExecutable="true">
+    <startEvent id="start" name="开始"/>
+    <userTask id="managerApprove" name="经理审批" flowable:assignee="${starterId}">
+      <extensionElements>
+        <flowable:taskListener event="create" delegateExpression="${assigneeTaskListener}">
+          <flowable:field name="assigneeType">
+            <flowable:string>role</flowable:string>
+          </flowable:field>
+          <flowable:field name="assigneeValue">
+            <flowable:string>MANAGER</flowable:string>
+          </flowable:field>
+        </flowable:taskListener>
+      </extensionElements>
+    </userTask>
+    <userTask id="adminApprove" name="管理员审批">
+      <extensionElements>
+        <flowable:taskListener event="create" delegateExpression="${assigneeTaskListener}">
+          <flowable:field name="assigneeType">
+            <flowable:string>role</flowable:string>
+          </flowable:field>
+          <flowable:field name="assigneeValue">
+            <flowable:string>ADMIN</flowable:string>
+          </flowable:field>
+        </flowable:taskListener>
+      </extensionElements>
+    </userTask>
+    <endEvent id="end" name="结束"/>
+    <sequenceFlow id="f1" sourceRef="start" targetRef="managerApprove"/>
+    <sequenceFlow id="f2" sourceRef="managerApprove" targetRef="adminApprove"/>
+    <sequenceFlow id="f3" sourceRef="adminApprove" targetRef="end"/>
+  </process>
+</definitions>
