@@ -11,31 +11,61 @@
           <el-descriptions-item label="实例ID">{{ detail.processInstanceId }}</el-descriptions-item>
         </el-descriptions>
         <el-divider>表单数据</el-divider>
-        <pre class="form-box">{{ prettyForm }}</pre>
+        <el-form v-if="detail.resubmitTask" label-width="100px" class="resubmit-form">
+          <el-alert
+            title="该申请已被驳回，请修改表单后重新提交"
+            type="warning"
+            :closable="false"
+            show-icon
+            style="margin-bottom: 16px"
+          />
+          <el-form-item v-for="f in detail.formSchema || []" :key="f.field" :label="f.title">
+            <el-input v-if="f.type === 'input' || !f.type" v-model="editFormData[f.field]" />
+            <el-input v-else-if="f.type === 'textarea'" v-model="editFormData[f.field]" type="textarea" />
+            <el-input-number v-else-if="f.type === 'number'" v-model="editFormData[f.field]" />
+            <el-select v-else-if="f.type === 'select'" v-model="editFormData[f.field]" style="width: 100%">
+              <el-option v-for="o in f.options || []" :key="o.value" :label="o.label" :value="o.value" />
+            </el-select>
+            <el-select
+              v-else-if="f.type === 'user' || f.type === 'users'"
+              v-model="editFormData[f.field]"
+              :multiple="f.type === 'users'"
+              filterable
+              style="width: 100%"
+            >
+              <el-option
+                v-for="u in users"
+                :key="u.id"
+                :label="`${u.realName || u.username}（${u.username}）`"
+                :value="String(u.id)"
+              />
+            </el-select>
+          </el-form-item>
+        </el-form>
+        <pre v-else class="form-box">{{ prettyForm }}</pre>
         <el-form label-width="80px" style="margin-top: 16px">
-          <el-form-item label="意见">
+          <el-form-item :label="detail.resubmitTask ? '提交说明' : '意见'">
             <el-input v-model="comment" type="textarea" :rows="3" placeholder="请输入审批意见" />
           </el-form-item>
-          <el-form-item label="抄送">
+          <el-form-item v-if="!detail.resubmitTask" label="抄送">
             <el-select v-model="ccUserIds" multiple filterable remote :remote-method="searchUsers" placeholder="选择抄送人" style="width: 100%">
               <el-option v-for="u in users" :key="u.id" :label="`${u.realName} (${u.username})`" :value="u.id" />
             </el-select>
           </el-form-item>
           <el-form-item>
-            <el-button type="primary" @click="approve">同意</el-button>
-            <el-button type="danger" @click="openReject">驳回</el-button>
-            <el-button @click="openTransfer">转办</el-button>
+            <el-button type="primary" @click="approve">
+              {{ detail.resubmitTask ? '重新提交' : '同意' }}
+            </el-button>
+            <template v-if="!detail.resubmitTask">
+              <el-button type="danger" @click="openReject">驳回</el-button>
+              <el-button @click="openTransfer">转办</el-button>
+            </template>
           </el-form-item>
         </el-form>
       </el-col>
       <el-col :span="10">
         <h3>审批轨迹</h3>
-        <el-timeline>
-          <el-timeline-item v-for="(t, i) in timeline" :key="i" :timestamp="t.endTime || t.startTime" placement="top">
-            <b>{{ t.activityName || t.activityType }}</b>
-            <div>{{ t.assigneeName || t.assignee || '-' }}</div>
-          </el-timeline-item>
-        </el-timeline>
+        <ApprovalTimeline :data="timeline" />
       </el-col>
     </el-row>
 
@@ -57,7 +87,7 @@
             <el-option
               v-for="t in rejectTargets"
               :key="t.activityId"
-              :label="t.starterNode ? `${t.activityName}（发起人）` : t.activityName"
+              :label="t.systemNode || !t.starterNode ? t.activityName : `${t.activityName}（发起人）`"
               :value="t.activityId"
             />
           </el-select>
@@ -71,7 +101,7 @@
         <el-form-item v-else label="说明">
           <div class="hint">终止后流程实例结束，状态变为「已驳回」，发起人需要重新发起一次申请。</div>
         </el-form-item>
-        <el-form-item label="驳回意见">
+        <el-form-item label="驳回意见" required>
           <el-input v-model="comment" type="textarea" :rows="3" placeholder="请填写驳回原因" />
         </el-form-item>
       </el-form>
@@ -98,12 +128,13 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import http from '@/utils/http'
+import ApprovalTimeline from '@/components/ApprovalTimeline.vue'
 
 const route = useRoute()
 const router = useRouter()
 const loading = ref(false)
 const detail = ref<any>({})
-const timeline = ref<any[]>([])
+const timeline = ref<any>({ nodes: [] })
 const comment = ref('')
 const ccUserIds = ref<number[]>([])
 const users = ref<any[]>([])
@@ -115,6 +146,7 @@ const rejectMode = ref<'ACTIVITY' | 'TERMINATE'>('ACTIVITY')
 const rejectToActivityId = ref('')
 const rejectTargets = ref<any[]>([])
 const targetsLoading = ref(false)
+const editFormData = ref<Record<string, any>>({})
 
 const prettyForm = computed(() => {
   try {
@@ -129,9 +161,17 @@ async function load() {
   try {
     const res: any = await http.get(`/runtime/tasks/${route.params.taskId}`)
     detail.value = res.data || {}
+    try {
+      editFormData.value = JSON.parse(detail.value.formData || '{}')
+    } catch {
+      editFormData.value = {}
+    }
+    if (detail.value.resubmitTask && (detail.value.formSchema || []).some((f: any) => f.type === 'user' || f.type === 'users')) {
+      await searchUsers('')
+    }
     if (detail.value.processInstanceId) {
       const tl: any = await http.get(`/runtime/timeline/${detail.value.processInstanceId}`)
-      timeline.value = tl.data || []
+      timeline.value = tl.data || { nodes: [] }
     }
   } finally {
     loading.value = false
@@ -144,8 +184,13 @@ async function searchUsers(q: string) {
 }
 
 async function approve() {
-  await http.post('/runtime/approve', { taskId: route.params.taskId, comment: comment.value, ccUserIds: ccUserIds.value })
-  ElMessage.success('已同意')
+  await http.post('/runtime/approve', {
+    taskId: route.params.taskId,
+    comment: comment.value,
+    ccUserIds: ccUserIds.value,
+    formData: detail.value.resubmitTask ? editFormData.value : undefined,
+  })
+  ElMessage.success(detail.value.resubmitTask ? '已重新提交' : '已同意')
   router.push('/todo')
 }
 
@@ -166,6 +211,9 @@ async function openReject() {
 }
 
 async function submitReject() {
+  if (!comment.value.trim()) {
+    return ElMessage.warning('请填写驳回意见')
+  }
   if (rejectMode.value === 'ACTIVITY' && !rejectToActivityId.value) {
     return ElMessage.warning('请选择要回退到的节点')
   }

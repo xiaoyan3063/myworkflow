@@ -15,6 +15,7 @@ import com.myworkflow.module.process.entity.WfFormDef;
 import com.myworkflow.module.process.entity.WfProcessDef;
 import com.myworkflow.module.process.entity.WfProcessInstanceExt;
 import com.myworkflow.module.process.mapper.WfCcRecordMapper;
+import com.myworkflow.module.process.mapper.WfDoneTaskMapper;
 import com.myworkflow.module.process.mapper.WfFormDefMapper;
 import com.myworkflow.module.process.mapper.WfProcessDefMapper;
 import com.myworkflow.module.process.mapper.WfProcessInstanceExtMapper;
@@ -23,11 +24,19 @@ import com.myworkflow.module.system.entity.SysUser;
 import com.myworkflow.module.system.mapper.SysUserMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.flowable.bpmn.model.FlowElement;
+import org.flowable.bpmn.model.FlowNode;
+import org.flowable.bpmn.model.SequenceFlow;
+import org.flowable.bpmn.model.UserTask;
+import org.flowable.common.engine.impl.identity.Authentication;
 import org.flowable.engine.HistoryService;
+import org.flowable.engine.RepositoryService;
 import org.flowable.engine.RuntimeService;
 import org.flowable.engine.TaskService;
 import org.flowable.engine.history.HistoricActivityInstance;
 import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.engine.task.Comment;
+import org.flowable.identitylink.api.history.HistoricIdentityLink;
 import org.flowable.task.api.Task;
 import org.flowable.task.api.history.HistoricTaskInstance;
 import org.springframework.stereotype.Service;
@@ -35,20 +44,46 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class ProcessRuntimeService {
 
+    /** 审批动作写在评论的 type 上，轨迹据此判断这一步是通过还是驳回 */
+    static final String ACTION_APPROVE = "APPROVE";
+    static final String ACTION_REJECT = "REJECT";
+    static final String ACTION_TRANSFER = "TRANSFER";
+    static final String ACTION_RESUBMIT = "RESUBMIT";
+
+    private static final Map<String, String> ACTION_LABELS;
+
+    static {
+        Map<String, String> labels = new HashMap<>();
+        labels.put(ACTION_APPROVE, "通过");
+        labels.put(ACTION_REJECT, "拒绝");
+        labels.put(ACTION_TRANSFER, "转办");
+        labels.put(ACTION_RESUBMIT, "重新提交");
+        labels.put("PENDING", "待审批");
+        labels.put("CANCELLED", "已取消");
+        ACTION_LABELS = Collections.unmodifiableMap(labels);
+    }
+
+    private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
     private final WfProcessDefMapper processDefMapper;
     private final WfProcessInstanceExtMapper instanceExtMapper;
     private final WfCcRecordMapper ccRecordMapper;
     private final WfFormDefMapper formDefMapper;
+    private final WfDoneTaskMapper doneTaskMapper;
     private final RuntimeService runtimeService;
     private final TaskService taskService;
     private final HistoryService historyService;
+    private final RepositoryService repositoryService;
     private final SysUserMapper userMapper;
     private final NotifyService notifyService;
     private final ObjectMapper objectMapper;
@@ -145,26 +180,50 @@ public class ProcessRuntimeService {
         return PageResult.of(total, records);
     }
 
+    /**
+     * 我的已办按单据聚合，一张单据只出现一行。
+     * 同一个人在一张单据上可能处理过多个节点（驳回后又处理重新提交就是典型情况），
+     * 展示的是他最后处理的那个节点。
+     */
     public PageResult<Map<String, Object>> doneList(long page, long size) {
         String userId = String.valueOf(UserContext.currentUserId());
-        long total = historyService.createHistoricTaskInstanceQuery()
+        long total = doneTaskMapper.countDoneInstances(userId);
+        // 总数已经单独统计过，让分页插件只负责拼方言分页
+        Page<String> pageParam = new Page<>(page, size, false);
+        List<String> instanceIds = doneTaskMapper.selectDoneInstanceIds(pageParam, userId);
+        if (instanceIds.isEmpty()) {
+            return PageResult.of(total, Collections.emptyList());
+        }
+
+        // 每个实例保留该用户最后处理的一条任务
+        Map<String, HistoricTaskInstance> latest = new HashMap<>();
+        Map<String, Integer> handledCount = new HashMap<>();
+        for (HistoricTaskInstance t : historyService.createHistoricTaskInstanceQuery()
+                .processInstanceIdIn(instanceIds)
                 .taskAssignee(userId)
                 .finished()
-                .count();
-        List<HistoricTaskInstance> list = historyService.createHistoricTaskInstanceQuery()
-                .taskAssignee(userId)
-                .finished()
-                .orderByHistoricTaskInstanceEndTime().desc()
-                .listPage((int) ((page - 1) * size), (int) size);
+                .list()) {
+            handledCount.merge(t.getProcessInstanceId(), 1, Integer::sum);
+            latest.merge(t.getProcessInstanceId(), t,
+                    (a, b) -> a.getEndTime().after(b.getEndTime()) ? a : b);
+        }
+
+        Map<String, String> approvers = currentApprovers(instanceIds);
         List<Map<String, Object>> records = new ArrayList<>();
-        for (HistoricTaskInstance t : list) {
+        for (String instanceId : instanceIds) {
+            HistoricTaskInstance t = latest.get(instanceId);
+            if (t == null) {
+                continue;
+            }
             Map<String, Object> m = new HashMap<>();
             m.put("taskId", t.getId());
             m.put("taskName", t.getName());
-            m.put("processInstanceId", t.getProcessInstanceId());
+            m.put("processInstanceId", instanceId);
             m.put("startTime", t.getCreateTime());
             m.put("endTime", t.getEndTime());
-            WfProcessInstanceExt ext = findExt(t.getProcessInstanceId());
+            m.put("handledCount", handledCount.getOrDefault(instanceId, 1));
+            m.put("currentApprover", approvers.get(instanceId));
+            WfProcessInstanceExt ext = findExt(instanceId);
             if (ext != null) {
                 m.put("title", ext.getTitle());
                 m.put("starterName", ext.getStarterName());
@@ -180,18 +239,96 @@ public class ProcessRuntimeService {
                 new LambdaQueryWrapper<WfProcessInstanceExt>()
                         .eq(WfProcessInstanceExt::getStarterId, UserContext.currentUserId())
                         .orderByDesc(WfProcessInstanceExt::getStartTime));
+        Map<String, String> approvers = currentApprovers(p.getRecords().stream()
+                .map(WfProcessInstanceExt::getProcessInstId).collect(Collectors.toList()));
+        p.getRecords().forEach(r -> r.setCurrentApprover(approvers.get(r.getProcessInstId())));
         return PageResult.of(p.getTotal(), p.getRecords());
+    }
+
+    /**
+     * 批量查出这些实例当前停在谁手上。逐条查会把列表页打成 N+1，
+     * 所以一次性把待办捞出来再按实例归并。
+     */
+    private Map<String, String> currentApprovers(Collection<String> processInstanceIds) {
+        List<String> ids = processInstanceIds.stream()
+                .filter(StringUtils::hasText).distinct().collect(Collectors.toList());
+        if (ids.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        List<Task> tasks = taskService.createTaskQuery().processInstanceIdIn(ids).list();
+        Map<String, Set<String>> byInstance = new LinkedHashMap<>();
+        Set<String> allUserIds = new HashSet<>();
+        for (Task t : tasks) {
+            Set<String> users = byInstance.computeIfAbsent(t.getProcessInstanceId(), k -> new LinkedHashSet<>());
+            if (StringUtils.hasText(t.getAssignee())) {
+                users.add(t.getAssignee());
+            } else {
+                // 未认领的任务只有候选人，取候选人列表展示；配的是候选组就翻成组里的人
+                taskService.getIdentityLinksForTask(t.getId()).forEach(link -> {
+                    if (StringUtils.hasText(link.getUserId())) {
+                        users.add(link.getUserId());
+                    } else if (StringUtils.hasText(link.getGroupId())) {
+                        users.addAll(usersOfGroup(link.getGroupId()));
+                    }
+                });
+            }
+            allUserIds.addAll(users);
+        }
+
+        Map<String, String> names = userNames(allUserIds);
+        Map<String, String> result = new HashMap<>();
+        byInstance.forEach((instanceId, users) -> result.put(instanceId,
+                users.stream().map(u -> names.getOrDefault(u, u)).collect(Collectors.joining("、"))));
+        return result;
+    }
+
+    private Map<String, String> userNames(Set<String> userIds) {
+        List<Long> numeric = new ArrayList<>();
+        for (String id : userIds) {
+            try {
+                numeric.add(Long.valueOf(id));
+            } catch (NumberFormatException ignored) {
+                // assignee 也可能是外部系统的账号标识，保持原样展示
+            }
+        }
+        if (numeric.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        Map<String, String> names = new HashMap<>();
+        for (SysUser u : userMapper.selectBatchIds(numeric)) {
+            names.put(String.valueOf(u.getId()),
+                    StringUtils.hasText(u.getRealName()) ? u.getRealName() : u.getUsername());
+        }
+        return names;
     }
 
     @Transactional(rollbackFor = Exception.class)
     public void approve(TaskActionRequest req) {
         Task task = getTask(req.getTaskId());
         claimIfNeeded(task);
-        if (StringUtils.hasText(req.getComment())) {
-            taskService.addComment(task.getId(), task.getProcessInstanceId(), req.getComment());
-        }
+        boolean resubmitTask = BpmnEnhanceUtil.SYSTEM_RESUBMIT_ACTIVITY_ID
+                .equals(task.getTaskDefinitionKey());
+        // 即使没填意见也要留痕，审批轨迹靠 type 判断这一步是通过还是驳回
+        addActionComment(task, resubmitTask ? ACTION_RESUBMIT : ACTION_APPROVE, req.getComment());
         Map<String, Object> vars = req.getVariables() == null ? new HashMap<>() : new HashMap<>(req.getVariables());
-        vars.put("approved", true);
+        if (req.getFormData() != null) {
+            vars.putAll(req.getFormData());
+            WfProcessInstanceExt ext = findExt(task.getProcessInstanceId());
+            if (ext != null) {
+                WfProcessDef def = processDefMapper.selectById(ext.getProcessDefId());
+                if (def != null) {
+                    fillMissingFormFields(def, vars);
+                }
+                try {
+                    ext.setFormData(objectMapper.writeValueAsString(req.getFormData()));
+                    instanceExtMapper.updateById(ext);
+                } catch (Exception e) {
+                    throw new BizException("表单数据保存失败");
+                }
+            }
+        }
+        // 重新提交只是修改申请，不等同于审批通过
+        vars.put("approved", !resubmitTask);
         vars.put("lastComment", req.getComment());
         taskService.complete(task.getId(), vars);
         saveCc(req, task);
@@ -200,38 +337,64 @@ public class ProcessRuntimeService {
     }
 
     /**
-     * 当前任务可以驳回回退到哪些节点：本实例中已经走完的用户任务，按发生顺序排列。
-     * 配成「发起人本人」的节点会被标记出来，前端把它显示为「退回发起人」。
+     * 按流程设计图反向遍历当前节点的入向连线，只返回拓扑上的上游用户任务。
+     * 不使用历史记录：历史里可能包含前一次驳回后再次经过的节点，也可能包含当前设计图
+     * 并非当前节点上游的并行任务，都不应该因此成为可回退目标。
      */
     public List<Map<String, Object>> rejectTargets(String taskId) {
         Task task = getTask(taskId);
         Map<String, String> assigneeTypes = readAssigneeTypes(task.getProcessInstanceId());
-
-        List<HistoricActivityInstance> acts = historyService.createHistoricActivityInstanceQuery()
-                .processInstanceId(task.getProcessInstanceId())
-                .activityType("userTask")
-                .finished()
-                .orderByHistoricActivityInstanceStartTime().asc()
-                .list();
-
+        org.flowable.bpmn.model.Process process = repositoryService
+                .getBpmnModel(task.getProcessDefinitionId()).getMainProcess();
         List<Map<String, Object>> targets = new ArrayList<>();
-        Set<String> seen = new HashSet<>();
-        for (HistoricActivityInstance a : acts) {
-            // 同一节点可能因为会签或多次回退产生多条历史，只保留一条
-            if (a.getActivityId().equals(task.getTaskDefinitionKey()) || !seen.add(a.getActivityId())) {
-                continue;
+        FlowElement current = process.getFlowElement(task.getTaskDefinitionKey(), true);
+        if (current instanceof FlowNode) {
+            Deque<FlowNode> queue = new ArrayDeque<>();
+            queue.add((FlowNode) current);
+            Set<String> visited = new HashSet<>();
+            visited.add(current.getId());
+
+            while (!queue.isEmpty()) {
+                FlowNode node = queue.removeFirst();
+                for (SequenceFlow incoming : node.getIncomingFlows()) {
+                    FlowElement source = incoming.getSourceFlowElement();
+                    if (source == null && StringUtils.hasText(incoming.getSourceRef())) {
+                        source = process.getFlowElement(incoming.getSourceRef(), true);
+                    }
+                    if (!(source instanceof FlowNode) || !visited.add(source.getId())) {
+                        continue;
+                    }
+                    if (source instanceof UserTask
+                            && !BpmnEnhanceUtil.SYSTEM_RESUBMIT_ACTIVITY_ID.equals(source.getId())) {
+                        Map<String, Object> target = new HashMap<>();
+                        target.put("activityId", source.getId());
+                        target.put("activityName", StringUtils.hasText(source.getName())
+                                ? source.getName() : source.getId());
+                        target.put("starterNode", "starter".equals(assigneeTypes.get(source.getId())));
+                        targets.add(target);
+                    }
+                    queue.addLast((FlowNode) source);
+                }
             }
-            Map<String, Object> m = new HashMap<>();
-            m.put("activityId", a.getActivityId());
-            m.put("activityName", StringUtils.hasText(a.getActivityName()) ? a.getActivityName() : a.getActivityId());
-            m.put("starterNode", "starter".equals(assigneeTypes.get(a.getActivityId())));
-            targets.add(m);
+        }
+
+        // 开始事件本身不能承接待办，用发布时注入的系统任务代表「退回发起人」。
+        if (process.getFlowElement(BpmnEnhanceUtil.SYSTEM_RESUBMIT_ACTIVITY_ID, true) != null) {
+            Map<String, Object> starterTarget = new HashMap<>();
+            starterTarget.put("activityId", BpmnEnhanceUtil.SYSTEM_RESUBMIT_ACTIVITY_ID);
+            starterTarget.put("activityName", "发起人重新提交");
+            starterTarget.put("starterNode", true);
+            starterTarget.put("systemNode", true);
+            targets.add(starterTarget);
         }
         return targets;
     }
 
     @Transactional(rollbackFor = Exception.class)
     public void reject(TaskActionRequest req) {
+        if (!StringUtils.hasText(req.getComment())) {
+            throw new BizException("驳回意见不能为空");
+        }
         Task task = getTask(req.getTaskId());
         claimIfNeeded(task);
         // 带了目标节点就按回退处理，否则终止；显式传 rejectMode 优先
@@ -245,11 +408,8 @@ public class ProcessRuntimeService {
     }
 
     private void rejectAndTerminate(Task task, TaskActionRequest req) {
-        String reason = StringUtils.hasText(req.getComment()) ? req.getComment() : "驳回";
-        if (StringUtils.hasText(req.getComment())) {
-            taskService.addComment(task.getId(), task.getProcessInstanceId(), "驳回（终止流程）：" + req.getComment());
-        }
-        runtimeService.deleteProcessInstance(task.getProcessInstanceId(), reason);
+        addActionComment(task, ACTION_REJECT, req.getComment());
+        runtimeService.deleteProcessInstance(task.getProcessInstanceId(), req.getComment());
         WfProcessInstanceExt ext = findExt(task.getProcessInstanceId());
         if (ext != null) {
             ext.setStatus("REJECTED");
@@ -277,10 +437,7 @@ public class ProcessRuntimeService {
         }
 
         String targetName = activityName(task.getProcessInstanceId(), target);
-        if (StringUtils.hasText(req.getComment())) {
-            taskService.addComment(task.getId(), task.getProcessInstanceId(),
-                    "驳回至【" + targetName + "】：" + req.getComment());
-        }
+        addActionComment(task, ACTION_REJECT, req.getComment());
         // 回退后目标节点的分支条件会重新求值，这两个变量要先归位
         runtimeService.setVariable(task.getProcessInstanceId(), "approved", false);
         runtimeService.setVariable(task.getProcessInstanceId(), "lastComment", req.getComment());
@@ -303,6 +460,9 @@ public class ProcessRuntimeService {
     }
 
     private String activityName(String processInstanceId, String activityId) {
+        if (BpmnEnhanceUtil.SYSTEM_RESUBMIT_ACTIVITY_ID.equals(activityId)) {
+            return BpmnEnhanceUtil.SYSTEM_RESUBMIT_ACTIVITY_NAME;
+        }
         return historyService.createHistoricActivityInstanceQuery()
                 .processInstanceId(processInstanceId)
                 .activityId(activityId)
@@ -329,10 +489,9 @@ public class ProcessRuntimeService {
         if (!StringUtils.hasText(req.getTransferUserId())) {
             throw new BizException("请指定转办人");
         }
+        // 先留痕再改派，否则轨迹上只剩转办后的人，看不出是谁转出去的
+        addActionComment(task, ACTION_TRANSFER, req.getComment());
         taskService.setAssignee(task.getId(), req.getTransferUserId());
-        if (StringUtils.hasText(req.getComment())) {
-            taskService.addComment(task.getId(), task.getProcessInstanceId(), "转办：" + req.getComment());
-        }
         notifyService.send(Long.valueOf(req.getTransferUserId()), "任务转办",
                 "您有一个新的转办待办：" + Optional.ofNullable(findExt(task.getProcessInstanceId()))
                         .map(WfProcessInstanceExt::getTitle).orElse(task.getName()),
@@ -345,6 +504,12 @@ public class ProcessRuntimeService {
         if (task != null) {
             m.putAll(toTaskMap(task));
             m.put("variables", runtimeService.getVariables(task.getProcessInstanceId()));
+            boolean resubmitTask = BpmnEnhanceUtil.SYSTEM_RESUBMIT_ACTIVITY_ID
+                    .equals(task.getTaskDefinitionKey());
+            m.put("resubmitTask", resubmitTask);
+            if (resubmitTask) {
+                appendFormSchema(m, findExt(task.getProcessInstanceId()));
+            }
         } else {
             HistoricTaskInstance ht = historyService.createHistoricTaskInstanceQuery().taskId(taskId).singleResult();
             if (ht == null) throw new BizException("任务不存在");
@@ -363,34 +528,313 @@ public class ProcessRuntimeService {
         return m;
     }
 
-    public List<Map<String, Object>> timeline(String processInstanceId) {
-        List<HistoricActivityInstance> acts = historyService.createHistoricActivityInstanceQuery()
+    private void appendFormSchema(Map<String, Object> detail, WfProcessInstanceExt ext) {
+        if (ext == null || ext.getProcessDefId() == null) {
+            detail.put("formSchema", Collections.emptyList());
+            return;
+        }
+        WfProcessDef def = processDefMapper.selectById(ext.getProcessDefId());
+        WfFormDef form = def == null || def.getFormId() == null
+                ? null : formDefMapper.selectById(def.getFormId());
+        if (form == null || !StringUtils.hasText(form.getFormSchema())) {
+            detail.put("formSchema", Collections.emptyList());
+            return;
+        }
+        try {
+            detail.put("formSchema", objectMapper.readValue(form.getFormSchema(), List.class));
+        } catch (Exception e) {
+            detail.put("formSchema", Collections.emptyList());
+        }
+    }
+
+    /**
+     * 流程实例详情，供已办结的单据查看审批轨迹。
+     * 与 taskDetail 的区别：不依赖是否还有活动任务，流程跑完了照样能查。
+     */
+    public Map<String, Object> instanceDetail(String processInstanceId) {
+        WfProcessInstanceExt ext = findExt(processInstanceId);
+        if (ext == null) {
+            throw new BizException("流程实例不存在");
+        }
+        assertCanView(ext);
+
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("processInstanceId", ext.getProcessInstId());
+        m.put("title", ext.getTitle());
+        m.put("processKey", ext.getProcessKey());
+        m.put("businessKey", ext.getBusinessKey());
+        m.put("businessType", ext.getBusinessType());
+        m.put("starterName", ext.getStarterName());
+        m.put("status", ext.getStatus());
+        m.put("startTime", ext.getStartTime() == null ? null : ext.getStartTime().format(TIME_FORMAT));
+        m.put("endTime", ext.getEndTime() == null ? null : ext.getEndTime().format(TIME_FORMAT));
+        m.put("formData", ext.getFormData());
+        m.put("currentApprover", currentApprovers(
+                Collections.singletonList(processInstanceId)).get(processInstanceId));
+        appendFormSchema(m, ext);
+        return m;
+    }
+
+    /** 审批记录只对相关人可见：管理员、发起人、参与过的审批人、被抄送人 */
+    private void assertCanView(WfProcessInstanceExt ext) {
+        UserContext ctx = UserContext.get();
+        if (ctx != null && ctx.isAdmin()) {
+            return;
+        }
+        Long userId = UserContext.currentUserId();
+        if (userId == null) {
+            throw new BizException("无权查看该审批记录");
+        }
+        if (userId.equals(ext.getStarterId())) {
+            return;
+        }
+        long handled = historyService.createHistoricTaskInstanceQuery()
+                .processInstanceId(ext.getProcessInstId())
+                .taskInvolvedUser(String.valueOf(userId))
+                .count();
+        if (handled > 0) {
+            return;
+        }
+        Long cc = ccRecordMapper.selectCount(new LambdaQueryWrapper<WfCcRecord>()
+                .eq(WfCcRecord::getProcessInstId, ext.getProcessInstId())
+                .eq(WfCcRecord::getUserId, userId));
+        if (cc == null || cc == 0) {
+            throw new BizException("无权查看该审批记录");
+        }
+    }
+
+    /**
+     * 审批轨迹。以历史任务为单位而不是历史活动：历史任务一定带 assignee 和起止时间，
+     * 驳回、回退这类没有正常 complete 的任务也能拿到处理人。
+     * 相邻且同节点的任务合并成一段（会签的多个人聚在一起），
+     * 回退后再次经过同一节点时不相邻，会自然形成新的一段。
+     */
+    public Map<String, Object> timeline(String processInstanceId) {
+        WfProcessInstanceExt ext = findExt(processInstanceId);
+        List<HistoricTaskInstance> tasks = historyService.createHistoricTaskInstanceQuery()
                 .processInstanceId(processInstanceId)
-                .orderByHistoricActivityInstanceStartTime().asc()
+                .orderByHistoricTaskInstanceStartTime().asc()
+                .orderByTaskId().asc()
                 .list();
-        List<Map<String, Object>> list = new ArrayList<>();
-        for (HistoricActivityInstance a : acts) {
-            if (!"userTask".equals(a.getActivityType()) && !"startEvent".equals(a.getActivityType())
-                    && !"endEvent".equals(a.getActivityType())) {
-                continue;
+
+        Map<String, List<Comment>> commentsByTask = taskService
+                .getProcessInstanceComments(processInstanceId).stream()
+                .filter(c -> StringUtils.hasText(c.getTaskId()))
+                .collect(Collectors.groupingBy(Comment::getTaskId));
+
+        Set<String> userIds = new HashSet<>();
+        tasks.forEach(t -> {
+            if (StringUtils.hasText(t.getAssignee())) userIds.add(t.getAssignee());
+        });
+        commentsByTask.values().forEach(list -> list.forEach(c -> {
+            if (StringUtils.hasText(c.getUserId())) userIds.add(c.getUserId());
+        }));
+        // 未结束的节点要看运行时任务：历史表里的 assignee 停留在任务创建那一刻，转办、认领都不会更新
+        Map<String, Task> liveTasks = taskService.createTaskQuery()
+                .processInstanceId(processInstanceId).list().stream()
+                .collect(Collectors.toMap(Task::getId, t -> t, (a, b) -> a));
+        liveTasks.values().forEach(t -> {
+            if (StringUtils.hasText(t.getAssignee())) userIds.add(t.getAssignee());
+        });
+        Map<String, List<String>> candidatesByTask = candidateUsers(tasks, liveTasks);
+        candidatesByTask.values().forEach(userIds::addAll);
+        Map<String, String> names = userNames(userIds);
+
+        List<Map<String, Object>> nodes = new ArrayList<>();
+        Map<String, Object> group = null;
+        for (HistoricTaskInstance t : tasks) {
+            if (group == null || !Objects.equals(group.get("activityId"), t.getTaskDefinitionKey())) {
+                group = new LinkedHashMap<>();
+                group.put("activityId", t.getTaskDefinitionKey());
+                group.put("activityName", StringUtils.hasText(t.getName())
+                        ? t.getName() : t.getTaskDefinitionKey());
+                group.put("handlers", new ArrayList<Map<String, Object>>());
+                nodes.add(group);
             }
-            Map<String, Object> m = new HashMap<>();
-            m.put("activityId", a.getActivityId());
-            m.put("activityName", a.getActivityName());
-            m.put("activityType", a.getActivityType());
-            m.put("assignee", a.getAssignee());
-            m.put("startTime", a.getStartTime());
-            m.put("endTime", a.getEndTime());
-            if (StringUtils.hasText(a.getAssignee())) {
-                try {
-                    SysUser u = userMapper.selectById(Long.valueOf(a.getAssignee()));
-                    if (u != null) m.put("assigneeName", u.getRealName());
-                } catch (Exception ignored) {
+            appendHandler(group, t, commentsByTask.get(t.getId()), names,
+                    candidatesByTask.get(t.getId()), liveTasks.get(t.getId()));
+        }
+        nodes.forEach(this::summarizeNode);
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("starterName", ext == null ? null : ext.getStarterName());
+        result.put("startTime", ext == null || ext.getStartTime() == null
+                ? null : ext.getStartTime().format(TIME_FORMAT));
+        result.put("status", ext == null ? null : ext.getStatus());
+        result.put("finished", ext != null && !"RUNNING".equals(ext.getStatus()));
+        result.put("endTime", ext == null || ext.getEndTime() == null
+                ? null : ext.getEndTime().format(TIME_FORMAT));
+        result.put("nodes", nodes);
+        return result;
+    }
+
+    /**
+     * 多人审批的节点在有人认领前只有候选人、没有 assignee，
+     * 轨迹上要把这些候选人列出来，否则待审批那一步显示不出是谁该处理。
+     */
+    private Map<String, List<String>> candidateUsers(List<HistoricTaskInstance> tasks,
+                                                     Map<String, Task> liveTasks) {
+        Map<String, List<String>> result = new HashMap<>();
+        for (HistoricTaskInstance t : tasks) {
+            Task live = liveTasks.get(t.getId());
+            List<String> users = new ArrayList<>();
+            List<String> groups = new ArrayList<>();
+            if (live != null) {
+                if (StringUtils.hasText(live.getAssignee())) {
+                    continue;
+                }
+                taskService.getIdentityLinksForTask(t.getId()).forEach(link -> {
+                    if (StringUtils.hasText(link.getUserId())) users.add(link.getUserId());
+                    else if (StringUtils.hasText(link.getGroupId())) groups.add(link.getGroupId());
+                });
+            } else {
+                if (StringUtils.hasText(t.getAssignee())) {
+                    continue;
+                }
+                for (HistoricIdentityLink link : historyService.getHistoricIdentityLinksForTask(t.getId())) {
+                    if (StringUtils.hasText(link.getUserId())) users.add(link.getUserId());
+                    else if (StringUtils.hasText(link.getGroupId())) groups.add(link.getGroupId());
                 }
             }
-            list.add(m);
+
+            List<String> candidates = users.stream().distinct().collect(Collectors.toList());
+            if (candidates.isEmpty()) {
+                // 节点配的是候选组，身份连接上只有组编码
+                candidates = groups.stream().distinct()
+                        .flatMap(g -> usersOfGroup(g).stream())
+                        .distinct()
+                        .collect(Collectors.toList());
+            }
+            if (!candidates.isEmpty()) {
+                result.put(t.getId(), candidates);
+            }
         }
-        return list;
+        return result;
+    }
+
+    @SuppressWarnings("unchecked")
+    private void appendHandler(Map<String, Object> group, HistoricTaskInstance task,
+                               List<Comment> comments, Map<String, String> names,
+                               List<String> candidates, Task live) {
+        Comment acted = comments == null ? null : comments.stream()
+                .filter(c -> ACTION_LABELS.containsKey(c.getType()) || StringUtils.hasText(c.getFullMessage()))
+                .reduce((first, second) -> second)
+                .orElse(null);
+
+        String userId;
+        if (task.getEndTime() == null) {
+            // 待办看运行时，转办改派后要显示新的处理人而不是留痕里的转出人
+            userId = live != null ? live.getAssignee() : task.getAssignee();
+        } else {
+            // 已办以留痕为准，历史表的 assignee 可能还是任务创建时的值
+            userId = acted != null && StringUtils.hasText(acted.getUserId())
+                    ? acted.getUserId() : task.getAssignee();
+        }
+        String action = resolveAction(task, acted);
+
+        String displayName;
+        if (StringUtils.hasText(userId)) {
+            displayName = names.getOrDefault(userId, userId);
+        } else if (candidates != null && !candidates.isEmpty()) {
+            // 多人待办在有人认领前没有 assignee，列出候选人才能看出该谁处理
+            displayName = candidates.stream()
+                    .map(c -> names.getOrDefault(c, c))
+                    .collect(Collectors.joining("、"));
+        } else {
+            displayName = task.getEndTime() == null ? "待认领" : "系统";
+        }
+
+        Map<String, Object> handler = new LinkedHashMap<>();
+        handler.put("userId", userId);
+        handler.put("candidateCount", candidates == null ? 0 : candidates.size());
+        handler.put("name", displayName);
+        handler.put("action", action);
+        handler.put("actionText", ACTION_LABELS.getOrDefault(action, "处理中"));
+        handler.put("comment", acted == null ? null : stripLegacyPrefix(acted.getFullMessage()));
+        handler.put("time", formatDate(task.getEndTime() != null ? task.getEndTime()
+                : acted == null ? null : acted.getTime()));
+        handler.put("startTime", formatDate(task.getStartTime()));
+        ((List<Map<String, Object>>) group.get("handlers")).add(handler);
+
+        if (task.getStartTime() != null) {
+            group.merge("rawStart", task.getStartTime(), (a, b) ->
+                    ((Date) a).before((Date) b) ? a : b);
+        }
+        if (task.getEndTime() != null) {
+            group.merge("rawEnd", task.getEndTime(), (a, b) ->
+                    ((Date) a).after((Date) b) ? a : b);
+        }
+    }
+
+    /** 动作优先看评论上的 type；老数据没有 type，退回到消息前缀识别 */
+    private String resolveAction(HistoricTaskInstance task, Comment comment) {
+        // 还没结束的任务一律算待审批：转办只是换了个人，这一步仍未完成
+        if (task.getEndTime() == null) {
+            return "PENDING";
+        }
+        if (comment != null && ACTION_LABELS.containsKey(comment.getType())) {
+            return comment.getType();
+        }
+        String message = comment == null ? "" : Optional.ofNullable(comment.getFullMessage()).orElse("");
+        if (message.startsWith("驳回")) return ACTION_REJECT;
+        if (message.startsWith("转办")) return ACTION_TRANSFER;
+        if (message.startsWith("重新提交")) return ACTION_RESUBMIT;
+        if (message.startsWith("同意")) return ACTION_APPROVE;
+        // 已结束但没有任何操作记录：多半是流程被终止时一并清掉的并行待办
+        return StringUtils.hasText(task.getDeleteReason()) ? "CANCELLED" : ACTION_APPROVE;
+    }
+
+    private String stripLegacyPrefix(String message) {
+        if (!StringUtils.hasText(message)) {
+            return null;
+        }
+        int idx = message.indexOf('：');
+        if (idx > 0 && idx < 12) {
+            String head = message.substring(0, idx);
+            if (head.startsWith("驳回") || head.startsWith("同意")
+                    || head.startsWith("转办") || head.startsWith("重新提交")) {
+                return message.substring(idx + 1);
+            }
+        }
+        return message;
+    }
+
+    @SuppressWarnings("unchecked")
+    private void summarizeNode(Map<String, Object> node) {
+        List<Map<String, Object>> handlers = (List<Map<String, Object>>) node.get("handlers");
+        boolean rejected = handlers.stream().anyMatch(h -> ACTION_REJECT.equals(h.get("action")));
+        boolean pending = handlers.stream().anyMatch(h -> "PENDING".equals(h.get("action")));
+
+        String status = rejected ? "REJECTED" : pending ? "PENDING" : "APPROVED";
+        node.put("status", status);
+        node.put("statusText", rejected ? "拒绝" : pending ? "审批中" : "通过");
+
+        Date start = (Date) node.remove("rawStart");
+        Date end = (Date) node.remove("rawEnd");
+        node.put("startTime", formatDate(start));
+        node.put("endTime", formatDate(end));
+        node.put("durationText", pending || start == null || end == null
+                ? null : durationText(end.getTime() - start.getTime()));
+    }
+
+    private String durationText(long millis) {
+        long minutes = millis / 60000;
+        if (minutes < 1) {
+            return "小于1分钟";
+        }
+        long days = minutes / (60 * 24);
+        long hours = minutes % (60 * 24) / 60;
+        long mins = minutes % 60;
+        StringBuilder sb = new StringBuilder();
+        if (days > 0) sb.append(days).append("天");
+        if (hours > 0) sb.append(hours).append("小时");
+        if (mins > 0) sb.append(mins).append("分钟");
+        return sb.toString();
+    }
+
+    private String formatDate(Date date) {
+        return date == null ? null
+                : LocalDateTime.ofInstant(date.toInstant(), ZoneId.systemDefault()).format(TIME_FORMAT);
     }
 
     public PageResult<WfCcRecord> myCc(long page, long size) {
@@ -398,6 +842,9 @@ public class ProcessRuntimeService {
                 new LambdaQueryWrapper<WfCcRecord>()
                         .eq(WfCcRecord::getUserId, UserContext.currentUserId())
                         .orderByDesc(WfCcRecord::getCreateTime));
+        Map<String, String> approvers = currentApprovers(p.getRecords().stream()
+                .map(WfCcRecord::getProcessInstId).collect(Collectors.toList()));
+        p.getRecords().forEach(r -> r.setCurrentApprover(approvers.get(r.getProcessInstId())));
         return PageResult.of(p.getTotal(), p.getRecords());
     }
 
@@ -427,16 +874,47 @@ public class ProcessRuntimeService {
         return task;
     }
 
+    /**
+     * Flowable 的评论作者取自 Authentication 上下文，不设置的话 userId 会是空的，
+     * 审批轨迹就认不出这一步是谁办的。所有留痕都要走这里。
+     */
+    private void addActionComment(Task task, String type, String message) {
+        String previous = Authentication.getAuthenticatedUserId();
+        Authentication.setAuthenticatedUserId(String.valueOf(UserContext.currentUserId()));
+        try {
+            taskService.addComment(task.getId(), task.getProcessInstanceId(),
+                    type, message == null ? "" : message);
+        } finally {
+            Authentication.setAuthenticatedUserId(previous);
+        }
+    }
+
+    /** 节点直接配候选组时身份连接上只有组编码，要翻成具体的人才能展示 */
+    private List<String> usersOfGroup(String groupCode) {
+        if (!StringUtils.hasText(groupCode)) {
+            return Collections.emptyList();
+        }
+        return userMapper.selectUserIdsByRoleCode(groupCode).stream()
+                .map(String::valueOf)
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * 办理前把任务落到当前用户名下。多人候选的任务在有人处理前没有 assignee，
+     * 不落名的话历史记录里查不到是谁办的，「我的已办」也会漏掉这条。
+     */
     private void claimIfNeeded(Task task) {
         String userId = String.valueOf(UserContext.currentUserId());
-        if (!StringUtils.hasText(task.getAssignee())) {
-            taskService.claim(task.getId(), userId);
-        } else if (!userId.equals(task.getAssignee())) {
+        if (StringUtils.hasText(task.getAssignee()) && !userId.equals(task.getAssignee())) {
             // 候选人也允许办理
             long cnt = taskService.createTaskQuery().taskId(task.getId()).taskCandidateOrAssigned(userId).count();
             if (cnt == 0) throw new BizException("无权处理该任务");
-            taskService.setAssignee(task.getId(), userId);
         }
+        // Flowable 记录历史任务在 create 监听器之前，监听器里设置的 assignee 不会同步到历史表，
+        // 历史里留下的是任务创建那一刻的值。不回写的话「我的已办」会漏单、轨迹会显示错的处理人。
+        // 运行时已经是本人时 setAssignee 会被引擎跳过，所以先置空再设一次强制落库。
+        taskService.setAssignee(task.getId(), null);
+        taskService.setAssignee(task.getId(), userId);
     }
 
     private Map<String, Object> toTaskMap(Task t) {

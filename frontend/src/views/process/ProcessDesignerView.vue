@@ -56,6 +56,7 @@
                 <el-option label="指定用户" value="user" />
                 <el-option label="按部门" value="dept" />
                 <el-option label="发起人本人" value="starter" />
+                <el-option label="从表单字段取值" value="formField" />
               </el-select>
             </el-form-item>
 
@@ -114,6 +115,26 @@
                 placeholder="部门下所有启用用户都会收到待办"
                 @change="applyTask"
               />
+            </el-form-item>
+
+            <el-form-item v-else-if="nodeForm.assigneeType === 'formField'" label="选择人员字段">
+              <el-select
+                v-model="nodeForm.assigneeValue"
+                style="width: 100%"
+                placeholder="选择绑定表单中的人员字段"
+                @change="applyTask"
+              >
+                <el-option
+                  v-for="f in assigneeFormFields"
+                  :key="f.field"
+                  :label="`${f.title || f.field}（${f.field}）`"
+                  :value="f.field"
+                />
+              </el-select>
+              <div class="tip">
+                运行到该节点时读取字段里的用户 ID。人员选择字段可直接使用；普通文本字段需填写用户 ID，
+                多人用英文逗号分隔。
+              </div>
             </el-form-item>
 
             <el-form-item label="多人审批方式">
@@ -411,7 +432,8 @@ const assigneeHelp = [
   { name: '按角色（推荐）', desc: '例如选「部门经理」，该角色下所有启用用户都会收到待办。人员调整时只改角色成员，不用回来改流程。' },
   { name: '指定用户', desc: '固定某几个人审批。人员离职或转岗后需要回到这里修改流程。' },
   { name: '按部门', desc: '该部门下所有启用用户都会收到待办，适合整个小组一起看的场景。' },
-  { name: '发起人本人', desc: '让提交人自己处理，常用于驳回后修改再提交的环节。' },
+  { name: '发起人本人', desc: '让提交人处理该审批节点，适合申请人确认、补充材料等环节。退回发起人无需再画此节点，系统会利用开始事件自动生成重新提交待办。' },
+  { name: '从表单字段取值', desc: '把表单中的人员选择字段作为审批人。单选字段产生一个待办，多选字段可配或签或会签。' },
 ]
 
 /**
@@ -521,6 +543,14 @@ const assigneeList = computed<string[]>({
   },
 })
 
+const assigneeFormFields = computed(() =>
+  [...formFields.value].sort((a, b) => {
+    const aUser = a.type === 'user' || a.type === 'users' ? 0 : 1
+    const bUser = b.type === 'user' || b.type === 'users' ? 0 : 1
+    return aUser - bUser
+  })
+)
+
 const taskConfigured = computed(
   () => nodeForm.assigneeType === 'starter' || !!nodeForm.assigneeValue
 )
@@ -535,6 +565,10 @@ const taskSummary = computed(() => {
 
 function describeAssignee(type: string, value: string) {
   if (type === 'starter') return '发起人本人'
+  if (type === 'formField') {
+    const field = formFields.value.find((f) => f.field === value)
+    return `表单字段：${field?.title || value || '未配置'}`
+  }
   const parts = (value || '').split(',').filter(Boolean)
   if (!parts.length) return '未配置'
   const names = parts.map((v) => {
@@ -911,6 +945,13 @@ function validate(): string[] {
       const cfg = readConfig(el.businessObject)
       if (cfg.assigneeType !== 'starter' && !cfg.assigneeValue) {
         problems.push(`审批节点「${el.businessObject.name || el.id}」还没有配置审批人`)
+      }
+      if (cfg.assigneeType === 'formField') {
+        if (!meta.formId) {
+          problems.push(`审批节点「${el.businessObject.name || el.id}」按表单字段取审批人，但流程还没有绑定表单`)
+        } else if (!formFields.value.some((f) => f.field === cfg.assigneeValue)) {
+          problems.push(`审批节点「${el.businessObject.name || el.id}」引用的人员字段「${cfg.assigneeValue}」已不存在`)
+        }
       }
     }
     if (/ExclusiveGateway$/.test(el.type)) {

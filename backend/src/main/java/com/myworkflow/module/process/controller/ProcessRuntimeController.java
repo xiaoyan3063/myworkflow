@@ -92,9 +92,15 @@ public class ProcessRuntimeController {
         return R.ok();
     }
 
+    @ApiOperation("流程实例详情")
+    @GetMapping("/instances/{processInstanceId}")
+    public R<Map<String, Object>> instanceDetail(@PathVariable String processInstanceId) {
+        return R.ok(runtimeService.instanceDetail(processInstanceId));
+    }
+
     @ApiOperation("审批轨迹")
     @GetMapping("/timeline/{processInstanceId}")
-    public R<List<Map<String, Object>>> timeline(@PathVariable String processInstanceId) {
+    public R<Map<String, Object>> timeline(@PathVariable String processInstanceId) {
         return R.ok(runtimeService.timeline(processInstanceId));
     }
 }

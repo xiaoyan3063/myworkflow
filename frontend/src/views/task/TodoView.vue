@@ -5,7 +5,7 @@
     <el-table :data="list" v-loading="loading">
       <el-table-column prop="title" label="标题" min-width="180" />
       <el-table-column prop="taskName" label="当前节点" width="140" />
-      <el-table-column prop="starterName" label="发起人" width="110" />
+      <el-table-column prop="starterName" label="发起人" width="150" />
       <el-table-column prop="createTime" label="到达时间" width="180" />
       <el-table-column label="操作" width="100" fixed="right">
         <template #default="{ row }">

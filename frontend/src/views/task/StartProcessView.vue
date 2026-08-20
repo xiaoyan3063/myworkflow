@@ -26,6 +26,21 @@
           <el-select v-else-if="f.type === 'select'" v-model="form.formData[f.field]" style="width: 100%">
             <el-option v-for="o in f.options || []" :key="o.value" :label="o.label" :value="o.value" />
           </el-select>
+          <el-select
+            v-else-if="f.type === 'user' || f.type === 'users'"
+            v-model="form.formData[f.field]"
+            :multiple="f.type === 'users'"
+            filterable
+            style="width: 100%"
+            placeholder="请选择人员"
+          >
+            <el-option
+              v-for="u in users"
+              :key="u.id"
+              :label="`${u.realName || u.username}（${u.username}）`"
+              :value="String(u.id)"
+            />
+          </el-select>
         </el-form-item>
       </template>
       <el-form-item>
@@ -44,6 +59,7 @@ import http from '@/utils/http'
 const router = useRouter()
 const processes = ref<any[]>([])
 const schema = ref<any[]>([])
+const users = ref<any[]>([])
 const loading = ref(false)
 const form = reactive<any>({
   processDefId: undefined,
@@ -54,8 +70,12 @@ const form = reactive<any>({
 })
 
 onMounted(async () => {
-  const res: any = await http.get('/process/defs/published')
-  processes.value = res.data || []
+  const [processRes, userRes]: any[] = await Promise.all([
+    http.get('/process/defs/published'),
+    http.get('/system/users/simple'),
+  ])
+  processes.value = processRes.data || []
+  users.value = userRes.data || []
 })
 
 async function onProcessChange(id: number) {
@@ -68,7 +88,9 @@ async function onProcessChange(id: number) {
     schema.value = []
   }
   form.formData = {}
-  schema.value.forEach((f) => { form.formData[f.field] = f.value ?? '' })
+  schema.value.forEach((f) => {
+    form.formData[f.field] = f.value ?? (f.type === 'users' ? [] : '')
+  })
 }
 
 async function submit() {

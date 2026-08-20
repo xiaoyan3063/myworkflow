@@ -1,5 +1,6 @@
 package com.myworkflow.module.process.listener;
 
+import com.myworkflow.common.exception.BizException;
 import com.myworkflow.module.process.service.AssigneeResolveService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -56,7 +57,9 @@ public class AssigneeTaskListener implements TaskListener {
         }
 
         String starterId = String.valueOf(delegateTask.getVariable("starterId"));
-        List<String> assignees = assigneeResolveService.resolve(type, value, starterId);
+        Object formFieldValue = "formField".equals(type) && value != null
+                ? delegateTask.getVariable(value) : null;
+        List<String> assignees = assigneeResolveService.resolve(type, value, starterId, formFieldValue);
 
         // 多实例会签：每个实例已有 assignee 变量
         Object miAssignee = delegateTask.getVariable("assignee");
@@ -66,6 +69,9 @@ public class AssigneeTaskListener implements TaskListener {
         }
 
         if (assignees.isEmpty()) {
+            if ("formField".equals(type)) {
+                throw new BizException("表单字段「" + value + "」未选择审批人");
+            }
             log.warn("任务 {} 未配置审批人，回退到发起人", delegateTask.getName());
             delegateTask.setAssignee(starterId);
             return;

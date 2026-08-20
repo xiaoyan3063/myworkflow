@@ -1,5 +1,6 @@
 package com.myworkflow.module.process.entity;
 
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.myworkflow.common.entity.BaseEntity;
 import lombok.Data;
@@ -14,4 +15,7 @@ public class WfCcRecord extends BaseEntity {
     private Long userId;
     private String title;
     private Integer readFlag;
+    /** 抄送单据当前停留节点的处理人，实时查 Flowable 得出，不落库 */
+    @TableField(exist = false)
+    private String currentApprover;
 }

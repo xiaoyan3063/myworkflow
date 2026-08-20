@@ -5,10 +5,18 @@
     <el-table :data="list" v-loading="loading">
       <el-table-column prop="title" label="标题" min-width="200" />
       <el-table-column prop="processInstId" label="实例ID" min-width="180" />
+      <el-table-column prop="currentApprover" label="当前审批人" min-width="150">
+        <template #default="{ row }">{{ row.currentApprover || '-' }}</template>
+      </el-table-column>
       <el-table-column prop="readFlag" label="已读" width="90">
         <template #default="{ row }">{{ row.readFlag ? '是' : '否' }}</template>
       </el-table-column>
       <el-table-column prop="createTime" label="时间" width="180" />
+      <el-table-column label="操作" width="100" fixed="right">
+        <template #default="{ row }">
+          <el-button link type="primary" @click="view(row.processInstId)">查看轨迹</el-button>
+        </template>
+      </el-table-column>
     </el-table>
     <div class="pager">
       <el-pagination background layout="total, prev, pager, next" :total="total" v-model:current-page="page" @current-change="load" />
@@ -18,7 +26,9 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import http from '@/utils/http'
+const router = useRouter()
 const list = ref<any[]>([])
 const total = ref(0)
 const page = ref(1)
@@ -30,6 +40,9 @@ async function load() {
     list.value = res.data?.records || []
     total.value = res.data?.total || 0
   } finally { loading.value = false }
+}
+function view(processInstId: string) {
+  router.push(`/instance/${processInstId}`)
 }
 onMounted(load)
 </script>

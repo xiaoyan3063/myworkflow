@@ -8,10 +8,18 @@
       <el-table-column prop="businessKey" label="业务单号" width="140" />
       <el-table-column prop="status" label="状态" width="110">
         <template #default="{ row }">
-          <el-tag :type="row.status === 'COMPLETED' ? 'success' : row.status === 'REJECTED' ? 'danger' : 'warning'">{{ row.status }}</el-tag>
+          <el-tag :type="statusTone(row.status)">{{ statusText(row.status) }}</el-tag>
         </template>
       </el-table-column>
+      <el-table-column prop="currentApprover" label="当前审批人" min-width="150">
+        <template #default="{ row }">{{ row.currentApprover || '-' }}</template>
+      </el-table-column>
       <el-table-column prop="startTime" label="发起时间" width="180" />
+      <el-table-column label="操作" width="100" fixed="right">
+        <template #default="{ row }">
+          <el-button link type="primary" @click="view(row.processInstId)">查看轨迹</el-button>
+        </template>
+      </el-table-column>
     </el-table>
     <div class="pager">
       <el-pagination background layout="total, prev, pager, next" :total="total" v-model:current-page="page" @current-change="load" />
@@ -21,7 +29,10 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import http from '@/utils/http'
+import { statusText, statusTone } from '@/utils/status'
+const router = useRouter()
 const list = ref<any[]>([])
 const total = ref(0)
 const page = ref(1)
@@ -33,6 +44,9 @@ async function load() {
     list.value = res.data?.records || []
     total.value = res.data?.total || 0
   } finally { loading.value = false }
+}
+function view(processInstId: string) {
+  router.push(`/instance/${processInstId}`)
 }
 onMounted(load)
 </script>

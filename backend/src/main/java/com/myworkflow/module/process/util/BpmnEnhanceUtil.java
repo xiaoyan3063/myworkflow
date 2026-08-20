@@ -32,6 +32,8 @@ public final class BpmnEnhanceUtil {
     private static final String BPMN_NS = "http://www.omg.org/spec/BPMN/20100524/MODEL";
     private static final String FLOWABLE_NS = "http://flowable.org/bpmn";
     private static final String ASSIGNEE_LISTENER = "${assigneeTaskListener}";
+    public static final String SYSTEM_RESUBMIT_ACTIVITY_ID = "__wf_resubmit_starter";
+    public static final String SYSTEM_RESUBMIT_ACTIVITY_NAME = "发起人重新提交";
 
     private BpmnEnhanceUtil() {
     }
@@ -56,6 +58,7 @@ public final class BpmnEnhanceUtil {
             for (Element task : userTasks(doc)) {
                 enhanceTask(doc, task);
             }
+            appendStarterResubmitTask(doc);
             return toString(doc);
         } catch (Exception e) {
             throw new BizException("流程图处理失败：" + e.getMessage());
@@ -146,6 +149,58 @@ public final class BpmnEnhanceUtil {
         return result;
     }
 
+    /**
+     * 开始事件是瞬时节点，执行流不能停在上面等待发起人修改。部署时注入一个不在设计图上、
+     * 正常路径也不会经过的系统用户任务。驳回到发起人时运行时服务把执行流移到此节点；
+     * 发起人重新提交后，它沿开始事件原来的出口重新进入审批路径。
+     */
+    private static void appendStarterResubmitTask(Document doc) {
+        if (elementById(doc, SYSTEM_RESUBMIT_ACTIVITY_ID) != null) {
+            return;
+        }
+        Element process = firstElement(doc, "process");
+        Element start = firstElement(doc, "startEvent");
+        if (process == null || start == null) {
+            return;
+        }
+
+        List<Element> startFlows = new ArrayList<>();
+        for (Element flow : childElements(process)) {
+            if ("sequenceFlow".equals(flow.getLocalName())
+                    && start.getAttribute("id").equals(flow.getAttribute("sourceRef"))) {
+                startFlows.add(flow);
+            }
+        }
+        if (startFlows.isEmpty()) {
+            return;
+        }
+
+        Element task = doc.createElementNS(BPMN_NS, "userTask");
+        task.setAttribute("id", SYSTEM_RESUBMIT_ACTIVITY_ID);
+        task.setAttribute("name", SYSTEM_RESUBMIT_ACTIVITY_NAME);
+        task.setAttribute("flowable:assignee", "${starterId}");
+        process.appendChild(task);
+
+        int index = 1;
+        for (Element startFlow : startFlows) {
+            Element cloned = (Element) startFlow.cloneNode(true);
+            cloned.setAttribute("id", SYSTEM_RESUBMIT_ACTIVITY_ID + "_flow_" + index++);
+            cloned.setAttribute("sourceRef", SYSTEM_RESUBMIT_ACTIVITY_ID);
+            process.appendChild(cloned);
+        }
+    }
+
+    private static Element elementById(Document doc, String id) {
+        NodeList nodes = doc.getElementsByTagName("*");
+        for (int i = 0; i < nodes.getLength(); i++) {
+            Element element = (Element) nodes.item(i);
+            if (id.equals(element.getAttribute("id"))) {
+                return element;
+            }
+        }
+        return null;
+    }
+
     private static void enhanceTask(Document doc, Element task) {
         String assigneeType = "user";
         String assigneeValue = "";
@@ -161,6 +216,10 @@ public final class BpmnEnhanceUtil {
             dueHours = obj.getInt("dueHours", 0);
             // 配置是设计器的内部数据，不必带到 Flowable 里当作任务说明
             task.removeChild(config);
+        } else if (hasOwnAssignment(task)) {
+            // 手写的 BPMN 直接在 XML 里配了审批人，没有设计器配置时不能拿默认值把它覆盖掉，
+            // 否则运行时解析不到审批人，任务会全部回退给发起人
+            return;
         }
 
         if (dueHours > 0 && !task.hasAttribute("flowable:dueDate")) {
@@ -170,6 +229,23 @@ public final class BpmnEnhanceUtil {
             appendMultiInstance(doc, task, assigneeType, assigneeValue);
         }
         writeAssigneeListener(doc, task, assigneeType, assigneeValue);
+    }
+
+    /** 任务自己声明了审批人（候选人属性或任务监听器）就算有配置 */
+    private static boolean hasOwnAssignment(Element task) {
+        if (task.hasAttribute("flowable:candidateUsers") || task.hasAttribute("flowable:candidateGroups")) {
+            return true;
+        }
+        Element ext = firstChild(task, "extensionElements");
+        if (ext == null) {
+            return false;
+        }
+        for (Element child : childElements(ext)) {
+            if ("taskListener".equals(child.getLocalName())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void writeAssigneeListener(Document doc, Element task, String assigneeType, String assigneeValue) {

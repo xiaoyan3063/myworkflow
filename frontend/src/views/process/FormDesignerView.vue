@@ -22,6 +22,8 @@
             <el-option label="多行文本" value="textarea" />
             <el-option label="数字" value="number" />
             <el-option label="下拉" value="select" />
+            <el-option label="人员单选" value="user" />
+            <el-option label="人员多选" value="users" />
           </el-select>
         </template>
       </el-table-column>

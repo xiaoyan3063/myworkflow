@@ -21,6 +21,7 @@ const router = createRouter({
         { path: 'cc', name: 'cc', component: () => import('@/views/task/CcView.vue'), meta: { title: '抄送我的' } },
         { path: 'start', name: 'start', component: () => import('@/views/task/StartProcessView.vue'), meta: { title: '发起审批' } },
         { path: 'task/:taskId', name: 'taskDetail', component: () => import('@/views/task/TaskDetailView.vue'), meta: { title: '任务详情' } },
+        { path: 'instance/:processInstanceId', name: 'instanceDetail', component: () => import('@/views/task/InstanceDetailView.vue'), meta: { title: '审批详情' } },
         { path: 'process', name: 'process', component: () => import('@/views/process/ProcessListView.vue'), meta: { title: '流程管理' } },
         { path: 'process/design/:id?', name: 'processDesign', component: () => import('@/views/process/ProcessDesignerView.vue'), meta: { title: '流程设计器' } },
         { path: 'forms', name: 'forms', component: () => import('@/views/process/FormListView.vue'), meta: { title: '表单管理' } },
