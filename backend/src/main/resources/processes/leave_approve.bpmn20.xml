@@ -1,37 +1,50 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+             xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+             xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+             xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
              xmlns:flowable="http://flowable.org/bpmn"
              xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
              targetNamespace="http://myworkflow.com/process">
   <process id="leave_approve" name="请假审批" isExecutable="true">
     <startEvent id="start" name="开始"/>
-    <userTask id="managerApprove" name="经理审批" flowable:assignee="${starterId}">
-      <extensionElements>
-        <flowable:taskListener event="create" delegateExpression="${assigneeTaskListener}">
-          <flowable:field name="assigneeType">
-            <flowable:string>role</flowable:string>
-          </flowable:field>
-          <flowable:field name="assigneeValue">
-            <flowable:string>MANAGER</flowable:string>
-          </flowable:field>
-        </flowable:taskListener>
-      </extensionElements>
+    <userTask id="managerApprove" name="经理审批">
+      <documentation>{"assigneeType":"role","assigneeValue":"MANAGER","multiMode":"or","dueHours":0}</documentation>
     </userTask>
     <userTask id="adminApprove" name="管理员审批">
-      <extensionElements>
-        <flowable:taskListener event="create" delegateExpression="${assigneeTaskListener}">
-          <flowable:field name="assigneeType">
-            <flowable:string>role</flowable:string>
-          </flowable:field>
-          <flowable:field name="assigneeValue">
-            <flowable:string>ADMIN</flowable:string>
-          </flowable:field>
-        </flowable:taskListener>
-      </extensionElements>
+      <documentation>{"assigneeType":"role","assigneeValue":"ADMIN","multiMode":"or","dueHours":0}</documentation>
     </userTask>
     <endEvent id="end" name="结束"/>
     <sequenceFlow id="f1" sourceRef="start" targetRef="managerApprove"/>
     <sequenceFlow id="f2" sourceRef="managerApprove" targetRef="adminApprove"/>
     <sequenceFlow id="f3" sourceRef="adminApprove" targetRef="end"/>
   </process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="leave_approve">
+      <bpmndi:BPMNShape id="start_di" bpmnElement="start">
+        <dc:Bounds x="180" y="160" width="36" height="36"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="managerApprove_di" bpmnElement="managerApprove">
+        <dc:Bounds x="280" y="138" width="100" height="80"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="adminApprove_di" bpmnElement="adminApprove">
+        <dc:Bounds x="440" y="138" width="100" height="80"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="end_di" bpmnElement="end">
+        <dc:Bounds x="600" y="160" width="36" height="36"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="f1_di" bpmnElement="f1">
+        <di:waypoint x="216" y="178"/>
+        <di:waypoint x="280" y="178"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="f2_di" bpmnElement="f2">
+        <di:waypoint x="380" y="178"/>
+        <di:waypoint x="440" y="178"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="f3_di" bpmnElement="f3">
+        <di:waypoint x="540" y="178"/>
+        <di:waypoint x="600" y="178"/>
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
 </definitions>

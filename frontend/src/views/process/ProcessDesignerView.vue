@@ -676,9 +676,9 @@ onMounted(async () => {
       description: res.data.description,
     })
     await loadFormFields()
-    await modeler.importXML(res.data.bpmnXml || EMPTY_BPMN)
+    await importDiagram(res.data.bpmnXml)
   } else {
-    await modeler.importXML(EMPTY_BPMN)
+    await importDiagram('')
   }
   modeler.get('canvas').zoom('fit-viewport')
 })
@@ -687,6 +687,28 @@ onBeforeUnmount(() => {
   if (decorateHandle) window.cancelAnimationFrame(decorateHandle)
   modeler?.destroy()
 })
+
+/**
+ * 缺少 BPMNDiagram 图形信息时 bpmn-js 能解析但画不出东西，画布会是一片空白。
+ * 这里把这种情况和解析失败都提示出来，不然只能看到空画布无从排查。
+ */
+async function importDiagram(xml?: string) {
+  if (!xml) {
+    await modeler.importXML(EMPTY_BPMN)
+    return
+  }
+  try {
+    const { warnings } = await modeler.importXML(xml)
+    if (!modeler.get('elementRegistry').filter((e: any) => e.type !== 'bpmn:Process').length) {
+      ElMessage.warning('该流程缺少图形信息，无法在设计器中显示，请重新绘制后保存')
+    } else if (warnings?.length) {
+      ElMessage.warning(`流程图有 ${warnings.length} 处不识别的内容，已忽略`)
+    }
+  } catch (e: any) {
+    ElMessage.error(`流程图解析失败：${e?.message || e}`)
+    await modeler.importXML(EMPTY_BPMN)
+  }
+}
 
 async function loadFormFields() {
   if (!meta.formId) {
