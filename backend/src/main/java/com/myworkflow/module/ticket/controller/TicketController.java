@@ -9,6 +9,8 @@ import io.swagger.annotations.ApiOperation;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.Map;
+
 @Api(tags = "工单")
 @RestController
 @RequestMapping("/ticket/tickets")
@@ -24,6 +26,17 @@ public class TicketController {
                                         @RequestParam(required = false) Long typeId,
                                         @RequestParam(required = false) String keyword) {
         return R.ok(ticketService.ticketPage(page, size, typeId, keyword));
+    }
+
+    @ApiOperation("按类型编码分页（仅 schema.filters 允许的筛选字段）")
+    @GetMapping("/by-type/{typeCode}")
+    public R<PageResult<TkTicket>> pageByType(@PathVariable String typeCode,
+                                              @RequestParam(defaultValue = "1") long page,
+                                              @RequestParam(defaultValue = "10") long size,
+                                              @RequestParam Map<String, String> params) {
+        params.remove("page");
+        params.remove("size");
+        return R.ok(ticketService.ticketPageByType(typeCode, page, size, params));
     }
 
     @ApiOperation("工单详情")

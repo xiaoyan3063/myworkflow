@@ -12,10 +12,12 @@ import com.myworkflow.module.system.entity.SysUser;
 import com.myworkflow.module.system.mapper.SysUserMapper;
 import com.myworkflow.module.ticket.entity.TkField;
 import com.myworkflow.module.ticket.entity.TkFormUi;
+import com.myworkflow.module.ticket.entity.TkListUi;
 import com.myworkflow.module.ticket.entity.TkTicket;
 import com.myworkflow.module.ticket.entity.TkType;
 import com.myworkflow.module.ticket.mapper.TkFieldMapper;
 import com.myworkflow.module.ticket.mapper.TkFormUiMapper;
+import com.myworkflow.module.ticket.mapper.TkListUiMapper;
 import com.myworkflow.module.ticket.mapper.TkTicketMapper;
 import com.myworkflow.module.ticket.mapper.TkTypeMapper;
 import lombok.RequiredArgsConstructor;
@@ -50,6 +52,7 @@ public class TicketService {
     private final TkTypeMapper typeMapper;
     private final TkFieldMapper fieldMapper;
     private final TkFormUiMapper formUiMapper;
+    private final TkListUiMapper listUiMapper;
     private final TkTicketMapper ticketMapper;
     private final SysUserMapper userMapper;
     private final ObjectMapper objectMapper;
@@ -107,6 +110,11 @@ public class TicketService {
             schema.put("fields", Collections.emptyList());
             ui.setSchema(schema);
             formUiMapper.insert(ui);
+            TkListUi listUi = new TkListUi();
+            listUi.setTypeId(type.getId());
+            listUi.setVersion(1);
+            listUi.setSchema(TicketListSchema.defaultSchema());
+            listUiMapper.insert(listUi);
         } else {
             typeMapper.updateById(type);
         }
@@ -122,6 +130,20 @@ public class TicketService {
         typeMapper.deleteById(id);
         fieldMapper.delete(new LambdaQueryWrapper<TkField>().eq(TkField::getTypeId, id));
         formUiMapper.delete(new LambdaQueryWrapper<TkFormUi>().eq(TkFormUi::getTypeId, id));
+        listUiMapper.delete(new LambdaQueryWrapper<TkListUi>().eq(TkListUi::getTypeId, id));
+    }
+
+    public TkType typeByCode(String typeCode) {
+        if (!StringUtils.hasText(typeCode)) {
+            throw new BizException("缺少工单类型编码");
+        }
+        TkType type = typeMapper.selectOne(new LambdaQueryWrapper<TkType>()
+                .eq(TkType::getTypeCode, typeCode.trim())
+                .last("LIMIT 1"));
+        if (type == null) {
+            throw new BizException("工单类型不存在：" + typeCode);
+        }
+        return type;
     }
 
     public List<TkField> listFields(Long typeId) {
@@ -240,6 +262,135 @@ public class TicketService {
             formUiMapper.updateById(ui);
         }
         return ui;
+    }
+
+    public TkListUi getListUi(Long typeId) {
+        typeDetail(typeId);
+        TkListUi ui = listUiMapper.selectOne(new LambdaQueryWrapper<TkListUi>()
+                .eq(TkListUi::getTypeId, typeId)
+                .last("LIMIT 1"));
+        if (ui == null) {
+            ui = new TkListUi();
+            ui.setTypeId(typeId);
+            ui.setVersion(1);
+            ui.setSchema(TicketListSchema.defaultSchema());
+            listUiMapper.insert(ui);
+        }
+        return ui;
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public TkListUi saveListUi(Long typeId, Map<String, Object> body) {
+        typeDetail(typeId);
+        Map<String, Object> schema = TicketListSchema.normalize(body, listFields(typeId));
+        TkListUi ui = listUiMapper.selectOne(new LambdaQueryWrapper<TkListUi>()
+                .eq(TkListUi::getTypeId, typeId)
+                .last("LIMIT 1"));
+        if (ui == null) {
+            ui = new TkListUi();
+            ui.setTypeId(typeId);
+            ui.setVersion(0);
+        }
+        int next = (ui.getVersion() == null ? 0 : ui.getVersion()) + 1;
+        schema.put("version", next);
+        ui.setVersion(next);
+        ui.setSchema(schema);
+        if (ui.getId() == null) {
+            listUiMapper.insert(ui);
+        } else {
+            listUiMapper.updateById(ui);
+        }
+        return ui;
+    }
+
+    /**
+     * 按类型编码分页。筛选字段必须出现在 list schema.filters 里，json 字段走 form_data->>'key'。
+     */
+    public PageResult<TkTicket> ticketPageByType(String typeCode, long page, long size, Map<String, String> params) {
+        TkType type = typeByCode(typeCode);
+        Map<String, Object> schema = getListUi(type.getId()).getSchema();
+        Map<String, Map<String, Object>> allowed = TicketListSchema.filterIndex(schema);
+
+        LambdaQueryWrapper<TkTicket> w = new LambdaQueryWrapper<TkTicket>()
+                .eq(TkTicket::getTypeId, type.getId());
+        if (params != null) {
+            for (Map.Entry<String, String> e : params.entrySet()) {
+                String rawKey = e.getKey();
+                if (!TicketListSchema.isSafeField(rawKey) || !StringUtils.hasText(e.getValue())) {
+                    continue;
+                }
+                Map<String, Object> spec = allowed.get(rawKey);
+                if (spec == null) {
+                    continue;
+                }
+                applyFilter(w, spec, e.getValue().trim());
+            }
+        }
+        w.orderByDesc(TkTicket::getCreateTime);
+        Page<TkTicket> p = ticketMapper.selectPage(new Page<>(page, size), w);
+        for (TkTicket t : p.getRecords()) {
+            t.setTypeName(type.getTypeName());
+            t.setTypeCode(type.getTypeCode());
+            t.setProcessKey(type.getProcessKey());
+        }
+        fillCurrentApprovers(p.getRecords());
+        return PageResult.of(p.getTotal(), p.getRecords());
+    }
+
+    private void applyFilter(LambdaQueryWrapper<TkTicket> w, Map<String, Object> spec, String value) {
+        String field = String.valueOf(spec.get("field"));
+        String op = spec.get("op") == null ? "eq" : String.valueOf(spec.get("op"));
+        String from = spec.get("from") == null ? TicketListSchema.FROM_MAIN : String.valueOf(spec.get("from"));
+        if (TicketListSchema.FROM_JSON.equals(from)) {
+            if (!TicketListSchema.isSafeField(field)) {
+                return;
+            }
+            String expr = "form_data->>'" + field + "'";
+            applyOp(w, expr, op, value, true);
+            return;
+        }
+        String col = TicketListSchema.mainColumn(field);
+        if (col == null) {
+            return;
+        }
+        if ("ticket_no".equals(col)) {
+            applyMainLikeOrEq(w, "ticket_no", TkTicket::getTicketNo, op, value);
+        } else if ("title".equals(col)) {
+            applyMainLikeOrEq(w, "title", TkTicket::getTitle, op, value);
+        } else if ("status".equals(col)) {
+            w.eq(TkTicket::getStatus, value);
+        } else if ("create_time".equals(col)) {
+            applyOp(w, "create_time", op, value, false);
+        }
+    }
+
+    private void applyMainLikeOrEq(LambdaQueryWrapper<TkTicket> w, String col,
+                                   com.baomidou.mybatisplus.core.toolkit.support.SFunction<TkTicket, ?> getter,
+                                   String op, String value) {
+        if ("like".equals(op)) {
+            w.like(getter, value);
+        } else if ("eq".equals(op)) {
+            w.eq(getter, value);
+        } else {
+            applyOp(w, col, op, value, false);
+        }
+    }
+
+    private void applyOp(LambdaQueryWrapper<TkTicket> w, String expr, String op, String value, boolean jsonText) {
+        String left = jsonText ? "(" + expr + ")" : expr;
+        if ("like".equals(op)) {
+            w.apply(expr + " LIKE {0}", "%" + value + "%");
+        } else if ("gt".equals(op)) {
+            w.apply(left + " > {0}", value);
+        } else if ("gte".equals(op)) {
+            w.apply(left + " >= {0}", value);
+        } else if ("lt".equals(op)) {
+            w.apply(left + " < {0}", value);
+        } else if ("lte".equals(op)) {
+            w.apply(left + " <= {0}", value);
+        } else {
+            w.apply(expr + " = {0}", value);
+        }
     }
 
     private void upsertFields(Long typeId, List<TkField> parsed) {

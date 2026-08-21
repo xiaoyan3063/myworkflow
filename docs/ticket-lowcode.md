@@ -196,6 +196,72 @@
 3. 工单列表新建草稿，表单与设计一致，保存后再次打开值还在。
 4. 旧草稿缺新字段时显示空，不报错。
 
+## 列表配置（第 4 步）
+
+没有列表画布，用 **字段勾选** 配列和筛选。不改审批流核心。
+
+- 表 `tk_list_ui`（`type_id`, `schema` jsonb, `version`）。每次保存 `version` +1。
+- 打开：工单类型 → **配置列表**，路由 `/ticket-types/{id}/list`。
+- 运行时：`/tickets/{typeCode}`（如 `/tickets/LEAVE`）。查看跳 `/tickets/{typeCode}/{id}`。
+- 旧 `/tickets` 总表仍可用。纯数字的旧详情 URL 会尝试重定向到带 typeCode 的路径。
+
+查询：`GET /ticket/tickets/by-type/{typeCode}?page=1&size=10&status=DRAFT&days=3`
+
+- 只有 `schema.filters` 里出现过的 `field` 会进 WHERE。
+- `status` / `ticket_no` / `title` / `createTime` 走主列；扩展字段 `form_data->>'key'`（字段名必须是 `[a-zA-Z][a-zA-Z0-9_]*`）。
+- 分页仍是 `PageResult`。
+- 状态用 `TICKET_STATUS`（草稿/审批中/已通过/已驳回），不和流程 `RUNNING` 混用。
+- 行按钮：查看、编辑（仅 DRAFT/REJECTED）、提交、删除草稿。本步全部显示。
+
+### 配置 JSON 示例
+
+```json
+{
+  "version": 1,
+  "designer": "checkbox",
+  "raw": null,
+  "columns": [
+    { "field": "ticket_no", "title": "工单号", "width": 180, "from": "main" },
+    { "field": "title", "title": "标题", "width": 200, "from": "main" },
+    { "field": "status", "title": "状态", "width": 100, "from": "main" },
+    { "field": "type", "title": "请假类型", "width": 140, "from": "json" },
+    { "field": "days", "title": "请假天数", "width": 120, "from": "json" },
+    { "field": "createTime", "title": "创建时间", "width": 180, "from": "main" }
+  ],
+  "filters": [
+    { "field": "ticket_no", "op": "like", "from": "main" },
+    { "field": "status", "op": "eq", "from": "main" },
+    { "field": "type", "op": "eq", "from": "json" },
+    { "field": "days", "op": "gte", "from": "json" }
+  ],
+  "rowActions": ["view", "edit", "submit", "delete"]
+}
+```
+
+### 筛选 SQL 示例
+
+对应 `GET /ticket/tickets/by-type/LEAVE?status=APPROVED&days=3`：
+
+```sql
+SELECT * FROM tk_ticket
+WHERE deleted = 0
+  AND type_id = :typeId
+  AND status = 'APPROVED'
+  AND form_data->>'days' >= '3'
+ORDER BY create_time DESC
+LIMIT 10 OFFSET 0;
+```
+
+未出现在 `filters` 里的参数（包括任意 jsonb 路径）会被忽略，不会拼进 SQL。
+
+### 验证
+
+1. 重启后端，确认 `tk_list_ui` 已建。
+2. 工单类型 → 配置列表：勾选主表列 + 若干扩展字段，保存。
+3. 打开 `/tickets/LEAVE`，列和筛选与配置一致，状态显示中文。
+4. 用已通过 + 扩展字段筛选，结果对；多传一个未配置参数结果不变。
+5. 草稿可编辑/提交/删除；审批中只能查看。
+
 ## PostgreSQL
 
 默认 profile 仍是 `h2`，避免没装库时起不来。切 PG 的改法见仓库根目录 `README.md`「切换 PostgreSQL」。  

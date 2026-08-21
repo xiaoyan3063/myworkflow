@@ -226,6 +226,19 @@ CREATE TABLE IF NOT EXISTS tk_form_ui (
     deleted         INT DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS tk_list_ui (
+    id              BIGINT PRIMARY KEY,
+    tenant_id       BIGINT DEFAULT 0,
+    type_id         BIGINT NOT NULL,
+    version         INT DEFAULT 1,
+    schema          JSONB,
+    create_time     TIMESTAMP,
+    update_time     TIMESTAMP,
+    create_by       BIGINT,
+    update_by       BIGINT,
+    deleted         INT DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS tk_ticket (
     id              BIGINT PRIMARY KEY,
     tenant_id       BIGINT DEFAULT 0,

@@ -3,7 +3,7 @@
     <div class="head">
       <div>
         <h1 class="page-title">工单类型</h1>
-        <p class="page-sub">维护工单分类；表单请用 FcDesigner 设计</p>
+        <p class="page-sub">维护工单分类；表单用 FcDesigner，列表用字段勾选</p>
       </div>
       <el-button type="primary" @click="openType()">新建类型</el-button>
     </div>
@@ -17,10 +17,12 @@
         <template #default="{ row }">{{ row.status === 1 ? '启用' : '停用' }}</template>
       </el-table-column>
       <el-table-column prop="updateTime" label="更新时间" width="180" />
-      <el-table-column label="操作" width="220" fixed="right">
+      <el-table-column label="操作" width="420" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="openType(row)">编辑</el-button>
           <el-button link type="primary" @click="$router.push(`/ticket-types/${row.id}/form`)">设计表单</el-button>
+          <el-button link type="primary" @click="$router.push(`/ticket-types/${row.id}/list`)">配置列表</el-button>
+          <el-button link type="primary" @click="$router.push(`/tickets/${row.typeCode}`)">打开列表</el-button>
           <el-button link type="danger" @click="removeType(row)">删除</el-button>
         </template>
       </el-table-column>

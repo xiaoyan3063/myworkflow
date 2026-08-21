@@ -4,6 +4,7 @@ import com.myworkflow.common.result.PageResult;
 import com.myworkflow.common.result.R;
 import com.myworkflow.module.ticket.entity.TkField;
 import com.myworkflow.module.ticket.entity.TkFormUi;
+import com.myworkflow.module.ticket.entity.TkListUi;
 import com.myworkflow.module.ticket.entity.TkType;
 import com.myworkflow.module.ticket.service.TicketService;
 import io.swagger.annotations.Api;
@@ -34,6 +35,12 @@ public class TicketTypeController {
     @GetMapping("/enabled")
     public R<List<TkType>> enabled() {
         return R.ok(ticketService.typeList());
+    }
+
+    @ApiOperation("按编码查类型")
+    @GetMapping("/code/{typeCode}")
+    public R<TkType> byCode(@PathVariable String typeCode) {
+        return R.ok(ticketService.typeByCode(typeCode));
     }
 
     @ApiOperation("类型详情")
@@ -85,5 +92,17 @@ public class TicketTypeController {
     @PutMapping("/{id}/form-ui")
     public R<TkFormUi> saveFormUi(@PathVariable Long id, @RequestBody Map<String, Object> body) {
         return R.ok(ticketService.saveFormUi(id, body));
+    }
+
+    @ApiOperation("列表配置 schema")
+    @GetMapping("/{id}/list-ui")
+    public R<TkListUi> listUi(@PathVariable Long id) {
+        return R.ok(ticketService.getListUi(id));
+    }
+
+    @ApiOperation("保存列表配置")
+    @PutMapping("/{id}/list-ui")
+    public R<TkListUi> saveListUi(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+        return R.ok(ticketService.saveListUi(id, body));
     }
 }

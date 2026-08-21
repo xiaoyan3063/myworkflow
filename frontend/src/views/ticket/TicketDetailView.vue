@@ -5,7 +5,7 @@
         <h1 class="page-title">工单详情</h1>
         <p class="page-sub">{{ ticket.ticketNo }} · {{ ticket.title }}</p>
       </div>
-      <el-button @click="router.push('/tickets')">返回列表</el-button>
+      <el-button @click="goBack">返回列表</el-button>
     </div>
 
     <!-- 数据到齐后再挂载，避免子组件停留在首次渲染的空数据上 -->
@@ -83,6 +83,12 @@ const ticket = ref<any>({})
 const formData = ref<Record<string, any>>({})
 const formSchema = ref<any>({ fields: [], raw: [] })
 const timeline = ref<any>({ nodes: [] })
+
+function goBack() {
+  const code = (route.params.typeCode as string) || ticket.value.typeCode
+  router.push(code ? `/tickets/${code}` : '/tickets')
+}
+
 onMounted(async () => {
   loading.value = true
   try {

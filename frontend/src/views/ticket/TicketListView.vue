@@ -36,7 +36,7 @@
       <el-table-column prop="createTime" label="创建时间" width="180" />
       <el-table-column label="操作" width="220" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" @click="$router.push(`/tickets/${row.id}`)">查看</el-button>
+          <el-button link type="primary" @click="$router.push(`/tickets/${row.typeCode}/${row.id}`)">查看</el-button>
           <el-button v-if="canEdit(row)" link type="primary" @click="openEdit(row)">编辑</el-button>
           <el-button v-if="canSubmit(row)" link type="success" @click="submit(row)">提交</el-button>
           <el-button v-if="row.status === 'DRAFT'" link type="danger" @click="remove(row)">删除</el-button>
