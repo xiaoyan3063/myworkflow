@@ -39,6 +39,7 @@ import org.flowable.engine.task.Comment;
 import org.flowable.identitylink.api.history.HistoricIdentityLink;
 import org.flowable.task.api.Task;
 import org.flowable.task.api.history.HistoricTaskInstance;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -87,6 +88,7 @@ public class ProcessRuntimeService {
     private final SysUserMapper userMapper;
     private final NotifyService notifyService;
     private final ObjectMapper objectMapper;
+    private final ObjectProvider<ProcessFinishListener> finishListeners;
 
     @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> start(StartProcessRequest req) {
@@ -247,9 +249,9 @@ public class ProcessRuntimeService {
 
     /**
      * 批量查出这些实例当前停在谁手上。逐条查会把列表页打成 N+1，
-     * 所以一次性把待办捞出来再按实例归并。
+     * 所以一次性把待办捞出来再按实例归并。工单列表复用同一套逻辑。
      */
-    private Map<String, String> currentApprovers(Collection<String> processInstanceIds) {
+    public Map<String, String> currentApprovers(Collection<String> processInstanceIds) {
         List<String> ids = processInstanceIds.stream()
                 .filter(StringUtils::hasText).distinct().collect(Collectors.toList());
         if (ids.isEmpty()) {
@@ -417,6 +419,7 @@ public class ProcessRuntimeService {
             instanceExtMapper.updateById(ext);
             notifyService.send(ext.getStarterId(), "审批驳回",
                     "您的申请「" + ext.getTitle() + "」已被驳回并终止", "REJECT", ext.getProcessInstId());
+            fireProcessFinished(task.getProcessInstanceId(), ext.getBusinessKey(), "REJECTED");
         }
     }
 
@@ -954,6 +957,18 @@ public class ProcessRuntimeService {
             instanceExtMapper.updateById(ext);
             notifyService.send(ext.getStarterId(), "审批完成",
                     "您的申请「" + ext.getTitle() + "」已审批通过", "COMPLETE", processInstanceId);
+            fireProcessFinished(processInstanceId, ext.getBusinessKey(), "COMPLETED");
+        }
+    }
+
+    private void fireProcessFinished(String processInstId, String businessKey, String processStatus) {
+        for (ProcessFinishListener listener : finishListeners) {
+            try {
+                listener.onProcessFinished(processInstId, businessKey, processStatus);
+            } catch (Exception e) {
+                log.warn("process finish listener failed, inst={}, key={}: {}",
+                        processInstId, businessKey, e.getMessage());
+            }
         }
     }
 

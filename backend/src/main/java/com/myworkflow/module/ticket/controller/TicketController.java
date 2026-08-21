@@ -9,7 +9,7 @@ import io.swagger.annotations.ApiOperation;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
-@Api(tags = "工单草稿")
+@Api(tags = "工单")
 @RestController
 @RequestMapping("/ticket/tickets")
 @RequiredArgsConstructor
@@ -49,5 +49,11 @@ public class TicketController {
     public R<Void> delete(@PathVariable Long id) {
         ticketService.deleteDraft(id);
         return R.ok();
+    }
+
+    @ApiOperation("提交审批")
+    @PostMapping("/{id}/submit")
+    public R<TkTicket> submit(@PathVariable Long id) {
+        return R.ok(ticketService.submit(id));
     }
 }

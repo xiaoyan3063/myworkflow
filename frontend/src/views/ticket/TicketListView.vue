@@ -3,7 +3,7 @@
     <div class="head">
       <div>
         <h1 class="page-title">工单列表</h1>
-        <p class="page-sub">草稿工单，表单由 FcDesigner 渲染</p>
+        <p class="page-sub">草稿可提交审批；审批中不可改字段</p>
       </div>
       <el-button type="primary" :disabled="!typeId" @click="openEdit()">新建草稿</el-button>
     </div>
@@ -22,17 +22,24 @@
     </el-form>
     <el-table :data="list" v-loading="loading">
       <el-table-column prop="ticketNo" label="工单号" width="180" />
-      <el-table-column prop="title" label="标题" min-width="180" />
+      <el-table-column prop="title" label="标题" min-width="160" />
       <el-table-column prop="typeName" label="类型" width="120" />
-      <el-table-column prop="starterName" label="发起人" width="120" />
+      <el-table-column prop="starterName" label="发起人" width="100" />
       <el-table-column label="状态" width="100">
-        <template #default="{ row }">{{ statusText(row.status) }}</template>
+        <template #default="{ row }">
+          <el-tag size="small" :type="ticketStatusTone(row.status)">{{ ticketStatusText(row.status) }}</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="当前审批人" min-width="140">
+        <template #default="{ row }">{{ row.currentApprover || '—' }}</template>
       </el-table-column>
       <el-table-column prop="createTime" label="创建时间" width="180" />
-      <el-table-column label="操作" width="140" fixed="right">
+      <el-table-column label="操作" width="220" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-          <el-button link type="danger" @click="remove(row)">删除</el-button>
+          <el-button link type="primary" @click="$router.push(`/tickets/${row.id}`)">查看</el-button>
+          <el-button v-if="canEdit(row)" link type="primary" @click="openEdit(row)">编辑</el-button>
+          <el-button v-if="canSubmit(row)" link type="success" @click="submit(row)">提交</el-button>
+          <el-button v-if="row.status === 'DRAFT'" link type="danger" @click="remove(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -40,7 +47,7 @@
       <el-pagination background layout="total, prev, pager, next" :total="total" v-model:current-page="page" @current-change="load" />
     </div>
 
-    <el-dialog v-model="visible" :title="form.id ? '编辑草稿' : '新建草稿'" width="640px" destroy-on-close>
+    <el-dialog v-model="visible" :title="form.id ? '编辑工单' : '新建草稿'" width="640px" destroy-on-close>
       <el-form label-width="100px">
         <el-form-item label="标题" required>
           <el-input v-model="form.title" />
@@ -49,7 +56,7 @@
       <TicketForm v-model="formData" :schema="formSchema" />
       <template #footer>
         <el-button @click="visible = false">取消</el-button>
-        <el-button type="primary" @click="save">保存草稿</el-button>
+        <el-button type="primary" @click="save">保存</el-button>
       </template>
     </el-dialog>
   </div>
@@ -60,6 +67,7 @@ import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import http from '@/utils/http'
 import TicketForm from '@/components/ticket/TicketForm.vue'
+import { ticketStatusText, ticketStatusTone } from '@/utils/status'
 
 const types = ref<any[]>([])
 const list = ref<any[]>([])
@@ -73,13 +81,12 @@ const form = reactive<any>({})
 const formData = ref<Record<string, any>>({})
 const formSchema = ref<any>({ fields: [], raw: [] })
 
-function statusText(s: string) {
-  if (s === 'DRAFT') return '草稿'
-  if (s === 'IN_APPROVAL') return '审批中'
-  if (s === 'APPROVED') return '已通过'
-  if (s === 'REJECTED') return '已驳回'
-  if (s === 'CANCELLED') return '已撤销'
-  return s || '-'
+function canEdit(row: any) {
+  return row.status === 'DRAFT' || row.status === 'REJECTED'
+}
+
+function canSubmit(row: any) {
+  return row.status === 'DRAFT' || row.status === 'REJECTED'
 }
 
 async function loadSchema(id: string) {
@@ -129,8 +136,15 @@ async function save() {
   } else {
     await http.post('/ticket/tickets', payload)
   }
-  ElMessage.success('已保存草稿')
+  ElMessage.success('已保存')
   visible.value = false
+  load()
+}
+
+async function submit(row: any) {
+  await ElMessageBox.confirm(`提交工单「${row.ticketNo}」进入审批？`, '确认')
+  await http.post(`/ticket/tickets/${row.id}/submit`)
+  ElMessage.success('已提交审批')
   load()
 }
 

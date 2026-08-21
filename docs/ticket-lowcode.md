@@ -160,6 +160,35 @@
 - 填表：工单新建/编辑用 `TicketForm`，读 `schema.raw` 渲染。人员控件数据源 `/system/users/simple`。
 - 不改：BPMN 设计器、`wf_form_def`、审批待办页。
 
+## 对接审批流（第 3 步）
+
+工单是主数据，`ProcessRuntimeService.start / approve / reject / timeline` 行为不变，只在流程**真正结束**时回写工单。
+
+### 改了哪些方法
+
+| 位置 | 做什么 |
+|------|--------|
+| `TicketService.submit` | 仅 `DRAFT` / 终止后的 `REJECTED` 可提交。调现有 `start`：`processKey` 来自类型、`businessKey=ticket_no`、`formData`、当前登录用户。成功后写 `process_inst_id`，`status=IN_APPROVAL`。与 `start` 同一事务，失败工单不变审批中。 |
+| `TicketService.updateDraft` | `IN_APPROVAL` / `APPROVED` 禁止改业务字段；`REJECTED` 可改后再提交。 |
+| `TicketService.ticketPage` / `ticketDetail` | 补 `currentApprover`（复用 `ProcessRuntimeService.currentApprovers`）。 |
+| `POST /ticket/tickets/{id}/submit` | 提交入口。开放 API 不循环调用。 |
+| `ProcessRuntimeService.refreshInstanceStatus` | 实例走完 `COMPLETED` 时回调。 |
+| `ProcessRuntimeService.rejectAndTerminate` | 终止驳回 `REJECTED` 时回调。回退节点（实例仍 `RUNNING`）**不**回调。 |
+| `ProcessFinishListener` / `TicketProcessCallback` | 用 `businessKey=ticket_no` 匹配工单；匹配不到只打日志（兼容「发起审批」纯流程单）。 |
+
+回写：`COMPLETED` → 工单 `APPROVED`；终止 `REJECTED` → 工单 `REJECTED`。
+
+### 测试步骤（绑 leave_approve）
+
+1. 流程管理确认 `leave_approve` 已发布。工单类型把「绑定流程」填成 `leave_approve`，并设计好表单。
+2. 用 `zhangsan` 建草稿、保存、提交。工单应变为「审批中」，出现 `process_inst_id`；`wf_process_instance_ext.business_key` 等于工单号。列表「当前审批人」有人。
+3. 打开工单详情：表单只读，右侧有 `ApprovalTimeline`。此时编辑按钮应不可用。
+4. 用经理账号在待办通过：流程结束后工单变为「已通过」，轨迹显示结束。
+5. 另开一张工单提交，待办里选**驳回并终止**（不要选回退节点）：工单变为「已驳回」，可再编辑并再次提交。
+6. 再开一张，驳回并**回退到发起人**：流程仍在跑，工单仍是「审批中」，不变成已驳回。发起人在待办里重新提交即可，不要再点工单「提交」（避免叠第二实例）。
+7. 菜单「发起审批」走原来的请假单，不应报错，日志可出现 `no ticket for businessKey=... skip writeback`。
+
+
 ### 验证
 
 1. 新建工单类型，打开设计表单，拖入单行/多行/数字/下拉/日期/人员单选/人员多选，保存。

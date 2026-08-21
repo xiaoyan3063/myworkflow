@@ -6,6 +6,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myworkflow.common.context.UserContext;
 import com.myworkflow.common.exception.BizException;
 import com.myworkflow.common.result.PageResult;
+import com.myworkflow.module.process.dto.StartProcessRequest;
+import com.myworkflow.module.process.service.ProcessRuntimeService;
 import com.myworkflow.module.system.entity.SysUser;
 import com.myworkflow.module.system.mapper.SysUserMapper;
 import com.myworkflow.module.ticket.entity.TkField;
@@ -36,7 +38,11 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class TicketService {
 
-    static final String STATUS_DRAFT = "DRAFT";
+    public static final String STATUS_DRAFT = "DRAFT";
+    public static final String STATUS_IN_APPROVAL = "IN_APPROVAL";
+    public static final String STATUS_APPROVED = "APPROVED";
+    public static final String STATUS_REJECTED = "REJECTED";
+    public static final String STATUS_CANCELLED = "CANCELLED";
     private static final DateTimeFormatter DAY = DateTimeFormatter.BASIC_ISO_DATE;
     private static final Set<String> FIELD_TYPES = new HashSet<String>(Arrays.asList(
             "input", "textarea", "number", "select", "date", "user", "users"));
@@ -47,6 +53,7 @@ public class TicketService {
     private final TkTicketMapper ticketMapper;
     private final SysUserMapper userMapper;
     private final ObjectMapper objectMapper;
+    private final ProcessRuntimeService processRuntimeService;
 
     public PageResult<TkType> typePage(long page, long size, String keyword) {
         Page<TkType> p = typeMapper.selectPage(new Page<>(page, size),
@@ -282,9 +289,26 @@ public class TicketService {
             if (type != null) {
                 t.setTypeName(type.getTypeName());
                 t.setTypeCode(type.getTypeCode());
+                t.setProcessKey(type.getProcessKey());
             }
         }
+        fillCurrentApprovers(p.getRecords());
         return PageResult.of(p.getTotal(), p.getRecords());
+    }
+
+    private void fillCurrentApprovers(List<TkTicket> tickets) {
+        List<String> instIds = new ArrayList<>();
+        for (TkTicket t : tickets) {
+            if (StringUtils.hasText(t.getProcessInstId()) && STATUS_IN_APPROVAL.equals(t.getStatus())) {
+                instIds.add(t.getProcessInstId());
+            }
+        }
+        Map<String, String> approvers = processRuntimeService.currentApprovers(instIds);
+        for (TkTicket t : tickets) {
+            if (StringUtils.hasText(t.getProcessInstId())) {
+                t.setCurrentApprover(approvers.get(t.getProcessInstId()));
+            }
+        }
     }
 
     public TkTicket ticketDetail(Long id) {
@@ -296,6 +320,12 @@ public class TicketService {
         if (type != null) {
             ticket.setTypeName(type.getTypeName());
             ticket.setTypeCode(type.getTypeCode());
+            ticket.setProcessKey(type.getProcessKey());
+        }
+        if (StringUtils.hasText(ticket.getProcessInstId()) && STATUS_IN_APPROVAL.equals(ticket.getStatus())) {
+            Map<String, String> approvers = processRuntimeService.currentApprovers(
+                    Collections.singletonList(ticket.getProcessInstId()));
+            ticket.setCurrentApprover(approvers.get(ticket.getProcessInstId()));
         }
         return ticket;
     }
@@ -328,8 +358,8 @@ public class TicketService {
     @Transactional(rollbackFor = Exception.class)
     public TkTicket updateDraft(Long id, TkTicket req) {
         TkTicket ticket = ticketDetail(id);
-        if (!STATUS_DRAFT.equals(ticket.getStatus())) {
-            throw new BizException("仅草稿可编辑");
+        if (!STATUS_DRAFT.equals(ticket.getStatus()) && !STATUS_REJECTED.equals(ticket.getStatus())) {
+            throw new BizException("审批中或已结束的工单不能改业务字段");
         }
         if (StringUtils.hasText(req.getTitle())) {
             ticket.setTitle(req.getTitle());
@@ -347,6 +377,48 @@ public class TicketService {
             throw new BizException("仅草稿可删除");
         }
         ticketMapper.deleteById(id);
+    }
+
+    /**
+     * 提交审批：先 start，成功才把工单改成审批中。同一事务，start 失败工单仍是草稿。
+     * 终止驳回后允许再提交（新开实例，businessKey 仍是 ticket_no）。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public TkTicket submit(Long ticketId) {
+        TkTicket ticket = ticketDetail(ticketId);
+        if (!STATUS_DRAFT.equals(ticket.getStatus()) && !STATUS_REJECTED.equals(ticket.getStatus())) {
+            throw new BizException("仅草稿或已驳回（已终止）的工单可提交");
+        }
+        TkType type = typeDetail(ticket.getTypeId());
+        if (!StringUtils.hasText(type.getProcessKey())) {
+            throw new BizException("工单类型未绑定流程，请填写已发布的 processKey");
+        }
+        UserContext ctx = UserContext.get();
+        if (ctx == null || ctx.getUserId() == null) {
+            throw new BizException("请先登录");
+        }
+        String starterName = StringUtils.hasText(ctx.getRealName()) ? ctx.getRealName() : ctx.getUsername();
+
+        StartProcessRequest req = new StartProcessRequest();
+        req.setProcessKey(type.getProcessKey());
+        req.setBusinessKey(ticket.getTicketNo());
+        req.setBusinessType("TICKET");
+        req.setTitle(ticket.getTitle());
+        req.setFormData(ticket.getFormData() == null ? new HashMap<String, Object>() : ticket.getFormData());
+        req.setStarterId(String.valueOf(ctx.getUserId()));
+        req.setStarterName(starterName);
+
+        Map<String, Object> started = processRuntimeService.start(req);
+        Object inst = started.get("processInstanceId");
+        if (inst == null || !StringUtils.hasText(String.valueOf(inst))) {
+            throw new BizException("流程发起失败");
+        }
+        ticket.setProcessInstId(String.valueOf(inst));
+        ticket.setStatus(STATUS_IN_APPROVAL);
+        ticket.setStarterId(ctx.getUserId());
+        ticket.setStarterName(starterName);
+        ticketMapper.updateById(ticket);
+        return ticketDetail(ticket.getId());
     }
 
     private String nextTicketNo(String typeCode) {

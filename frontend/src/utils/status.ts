@@ -15,3 +15,20 @@ export function statusText(status?: string) {
 export function statusTone(status?: string) {
   return INSTANCE_STATUS[status || '']?.tone || 'info'
 }
+
+export const TICKET_STATUS: Record<string, { text: string; tone: string }> = {
+  DRAFT: { text: '草稿', tone: 'info' },
+  IN_APPROVAL: { text: '审批中', tone: 'warning' },
+  APPROVED: { text: '已通过', tone: 'success' },
+  REJECTED: { text: '已驳回', tone: 'danger' },
+  CANCELLED: { text: '已撤销', tone: 'info' },
+}
+
+export function ticketStatusText(status?: string) {
+  if (!status) return '-'
+  return TICKET_STATUS[status]?.text || status
+}
+
+export function ticketStatusTone(status?: string) {
+  return TICKET_STATUS[status || '']?.tone || 'info'
+}

@@ -4,7 +4,7 @@
     v-model="inner"
     v-model:api="fapi"
     :rule="rule"
-    :option="silentFormOption"
+    :option="formOption"
     :disabled="disabled"
   />
   <el-empty v-else description="尚未设计表单，请先在工单类型中打开表单设计器" />
@@ -28,6 +28,10 @@ const fapi = ref<any>()
 const inner = ref<Record<string, any>>({ ...(props.modelValue || {}) })
 
 const rule = computed(() => rulesFromSchema(props.schema))
+const formOption = computed(() => ({
+  ...silentFormOption,
+  form: { ...(silentFormOption.form || {}), disabled: !!props.disabled },
+}))
 
 watch(
   () => props.modelValue,

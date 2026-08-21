@@ -16,7 +16,7 @@ public class TkTicket extends BaseEntity {
     private Long typeId;
     private String ticketNo;
     private String title;
-    /** 本步只允许 DRAFT */
+    /** DRAFT / IN_APPROVAL / APPROVED / REJECTED / CANCELLED */
     private String status;
     private Long starterId;
     private String starterName;
@@ -28,4 +28,8 @@ public class TkTicket extends BaseEntity {
     private String typeName;
     @TableField(exist = false)
     private String typeCode;
+    @TableField(exist = false)
+    private String processKey;
+    @TableField(exist = false)
+    private String currentApprover;
 }
