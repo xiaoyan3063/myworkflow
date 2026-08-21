@@ -1,0 +1,89 @@
+package com.myworkflow.module.ticket.controller;
+
+import com.myworkflow.common.result.PageResult;
+import com.myworkflow.common.result.R;
+import com.myworkflow.module.ticket.entity.TkField;
+import com.myworkflow.module.ticket.entity.TkFormUi;
+import com.myworkflow.module.ticket.entity.TkType;
+import com.myworkflow.module.ticket.service.TicketService;
+import io.swagger.annotations.Api;
+import io.swagger.annotations.ApiOperation;
+import lombok.RequiredArgsConstructor;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+import java.util.Map;
+
+@Api(tags = "工单类型")
+@RestController
+@RequestMapping("/ticket/types")
+@RequiredArgsConstructor
+public class TicketTypeController {
+
+    private final TicketService ticketService;
+
+    @ApiOperation("类型分页")
+    @GetMapping
+    public R<PageResult<TkType>> page(@RequestParam(defaultValue = "1") long page,
+                                      @RequestParam(defaultValue = "10") long size,
+                                      @RequestParam(required = false) String keyword) {
+        return R.ok(ticketService.typePage(page, size, keyword));
+    }
+
+    @ApiOperation("启用中的类型")
+    @GetMapping("/enabled")
+    public R<List<TkType>> enabled() {
+        return R.ok(ticketService.typeList());
+    }
+
+    @ApiOperation("类型详情")
+    @GetMapping("/{id}")
+    public R<TkType> detail(@PathVariable Long id) {
+        return R.ok(ticketService.typeDetail(id));
+    }
+
+    @ApiOperation("保存类型")
+    @PostMapping
+    public R<TkType> save(@RequestBody TkType type) {
+        return R.ok(ticketService.saveType(type));
+    }
+
+    @ApiOperation("删除类型")
+    @DeleteMapping("/{id}")
+    public R<Void> delete(@PathVariable Long id) {
+        ticketService.deleteType(id);
+        return R.ok();
+    }
+
+    @ApiOperation("字段列表")
+    @GetMapping("/{id}/fields")
+    public R<List<TkField>> fields(@PathVariable Long id) {
+        return R.ok(ticketService.listFields(id));
+    }
+
+    @ApiOperation("保存字段")
+    @PostMapping("/{id}/fields")
+    public R<TkField> saveField(@PathVariable Long id, @RequestBody TkField field) {
+        field.setTypeId(id);
+        return R.ok(ticketService.saveField(field));
+    }
+
+    @ApiOperation("删除字段")
+    @DeleteMapping("/fields/{fieldId}")
+    public R<Void> deleteField(@PathVariable Long fieldId) {
+        ticketService.deleteField(fieldId);
+        return R.ok();
+    }
+
+    @ApiOperation("表单设计 schema")
+    @GetMapping("/{id}/form-ui")
+    public R<TkFormUi> formUi(@PathVariable Long id) {
+        return R.ok(ticketService.getFormUi(id));
+    }
+
+    @ApiOperation("保存表单设计")
+    @PutMapping("/{id}/form-ui")
+    public R<TkFormUi> saveFormUi(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+        return R.ok(ticketService.saveFormUi(id, body));
+    }
+}

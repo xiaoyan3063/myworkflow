@@ -93,7 +93,7 @@ mvn -s maven-settings.xml spring-boot:run "-Dspring-boot.run.profiles=postgres"
 - 大字段用 `TEXT`，不要用 H2 的 `CLOB`（PostgreSQL 不认）。
 - H2 默认大小写不敏感；PostgreSQL 未加引号的列名是小写。本仓库建表已是小写蛇形，可直接用。
 - 切到 PG 后数据在磁盘上，重启不会像 H2 那样清空。
-- 工单低代码约定见 `docs/ticket-lowcode.md`。
+- 工单低代码约定见 `docs/ticket-lowcode.md`。工单表单设计器：工单类型页点「设计表单」，schema 在表 `tk_form_ui`。
 
 ## 开放接口（对接 CRM）
 

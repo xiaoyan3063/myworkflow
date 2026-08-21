@@ -178,6 +178,72 @@ CREATE TABLE IF NOT EXISTS wf_notify_message (
     deleted         INT DEFAULT 0
 );
 
+-- 工单底座（PostgreSQL jsonb；H2 无 jsonb，工单模块按 PG 使用）
+CREATE TABLE IF NOT EXISTS tk_type (
+    id              BIGINT PRIMARY KEY,
+    tenant_id       BIGINT DEFAULT 0,
+    type_code       VARCHAR(64) NOT NULL,
+    type_name       VARCHAR(128) NOT NULL,
+    process_key     VARCHAR(128),
+    status          INT DEFAULT 1,
+    remark          VARCHAR(512),
+    create_time     TIMESTAMP,
+    update_time     TIMESTAMP,
+    create_by       BIGINT,
+    update_by       BIGINT,
+    deleted         INT DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS tk_field (
+    id              BIGINT PRIMARY KEY,
+    tenant_id       BIGINT DEFAULT 0,
+    type_id         BIGINT NOT NULL,
+    field_key       VARCHAR(64) NOT NULL,
+    title           VARCHAR(128) NOT NULL,
+    field_type      VARCHAR(32) NOT NULL,
+    required        INT DEFAULT 0,
+    list_visible    INT DEFAULT 1,
+    sort_no         INT DEFAULT 0,
+    options_json    TEXT,
+    remark          VARCHAR(512),
+    create_time     TIMESTAMP,
+    update_time     TIMESTAMP,
+    create_by       BIGINT,
+    update_by       BIGINT,
+    deleted         INT DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS tk_form_ui (
+    id              BIGINT PRIMARY KEY,
+    tenant_id       BIGINT DEFAULT 0,
+    type_id         BIGINT NOT NULL,
+    version         INT DEFAULT 1,
+    schema          JSONB,
+    create_time     TIMESTAMP,
+    update_time     TIMESTAMP,
+    create_by       BIGINT,
+    update_by       BIGINT,
+    deleted         INT DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS tk_ticket (
+    id              BIGINT PRIMARY KEY,
+    tenant_id       BIGINT DEFAULT 0,
+    type_id         BIGINT NOT NULL,
+    ticket_no       VARCHAR(64) NOT NULL,
+    title           VARCHAR(512),
+    status          VARCHAR(32) NOT NULL,
+    starter_id      BIGINT,
+    starter_name    VARCHAR(64),
+    process_inst_id VARCHAR(64),
+    form_data       JSONB,
+    create_time     TIMESTAMP,
+    update_time     TIMESTAMP,
+    create_by       BIGINT,
+    update_by       BIGINT,
+    deleted         INT DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS open_app (
     id              BIGINT PRIMARY KEY,
     tenant_id       BIGINT DEFAULT 0,

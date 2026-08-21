@@ -1,0 +1,120 @@
+
+第 0 步：环境与约定（不写业务）
+
+你是本仓库的编程助手。当前项目是 Spring Boot 2.7 + Java 8 + Flowable + Vue 3 + Element Plus 的审批流。
+目标：后续要在这套系统上做工单低代码，数据库改用 PostgreSQL，表单设计器准备接入成熟产品（StudioOne 或 Vue3 兼容的同类）。
+
+这一步只做环境与约定，不要做工单业务。
+1. 检查 backend 的 postgres profile、schema.sql、启动方式，给出切换 PostgreSQL 的准确改法（application.yml、注意 H2 与 PG 的 SQL 差异）。
+2. 不要大改业务代码。若 schema.sql 有 H2 专用语法，改成 PostgreSQL 兼容。
+3. 在 docs/ticket-lowcode.md 写下：工单主状态枚举、工单与流程的关系（工单是主，审批是从，businessKey=工单号）、三种配置 JSON 的示例骨架（formSchema / listSchema / detailSchema）。设计器具体 API 未知时用占位，不要伪造 StudioOne 的接口名。
+4. 不改前端页面。输出你改了哪些文件、如何启动验证。
+
+
+第 1 步：工单元数据 + 工单主表（底座）
+
+在现有 myworkflow 仓库做「工单底座」，不要改 Flowable 审批逻辑，不要接设计器。
+
+背景：工单必须是独立实体。审批流已有 wf_form_def、wf_process_instance_ext，工单不要复用它们当主存储。数据库是 PostgreSQL，form 扩展字段用 jsonb。
+
+请实现：
+1. schema.sql 增加 tk_type、tk_field、tk_form_ui、tk_ticket（含 tenant_id、逻辑删除、时间字段，风格与现有表一致）。
+2. 对应 Java 实体、Mapper、Service、Controller，路径放 module/ticket。
+3. 工单类型 CRUD、字段 CRUD、工单草稿：创建（生成 ticket_no）、更新 form_data、按类型分页查询。ticket_no 先简单：类型编码+日期+序号。
+4. 前端加「工单类型」「工单列表（先普通表格）」两个页面，能新建草稿、编辑 jsonb 里的字段（先按 tk_field 动态 el-form，不接设计器）。
+5. 权限先沿用现有登录，不做菜单权限。
+6. 工单 status 仅允许 DRAFT。这一步禁止调用 runtime start。
+
+约束：Java 8、Spring Boot 2.7、MyBatis-Plus、前端 Vue3+Element Plus。改完说明表结构和接口。
+
+第 2 步：接入表单设计器（只解决「画表单 + 填表单」）
+
+在 myworkflow 的工单模块接入成熟表单设计器（选用 Vue3 + Element Plus 兼容的 FormCreate FcDesigner）。
+
+已有 tk_type、tk_field、tk_form_ui、tk_ticket。目标只要「设计表单 + 填表单」，不要做列表设计器，不要发起审批。
+
+请实现：
+1. 设计器页面：按工单类型加载/保存 schema 到 tk_form_ui。保存时解析 schema，upsert tk_field（以 field_key 为稳定键，不要每次保存清空 ID）。
+2. 封装 TicketForm 运行时组件：根据 tk_form_ui.schema + form_data 双向绑定。新建/编辑工单页改用该组件，替换第 1 步的手写 el-form。
+3. 字段类型至少覆盖：单行/多行/数字/下拉/日期/人员单选多选（人员数据源仍用现有 /system/users/simple）。
+4. 不要破坏现有流程设计器、wf_form_def、审批待办页。
+5. schema 版本号：tk_form_ui.version，保存即 +1。已填工单不自动迁移，只按保存时字段读写，缺的键当空。
+
+约束：不要把设计器源码抄进业务里大改；以 npm 依赖 + 包装组件方式接入。Java 8。完成后写：如何打开设计器、schema 存在哪张表、如何验证。
+
+
+第 3 步：工单对接审批流（提交 / 查状态 / 回写）
+
+把工单模块接到现有 Flowable 审批，不要重写审批引擎。
+
+已有 tk_ticket（ticket_no, status, process_inst_id, form_data, starter）、tk_type.process_key。现有 ProcessRuntimeService.start / approve / reject / timeline / instanceDetail 保持行为，只增加工单回写。
+
+请实现：
+1. TicketService.submit(ticketId)：仅 DRAFT 可提交；start 参数 processKey、businessKey=ticket_no、title、formData、starterId/Name 取当前登录用户；成功后写 process_inst_id，status=IN_APPROVAL。
+2. 在流程结束点回写工单：实例 COMPLETED → APPROVED；实例 REJECTED（终止）→ REJECTED。驳回并回退、实例仍 RUNNING → 工单仍 IN_APPROVAL。用 businessKey=ticket_no 匹配，匹配不到只打日志不抛错（兼容纯审批发起的单）。
+3. 工单详情：只读表单 + 状态中文 + 嵌入 ApprovalTimeline（已有组件）。审批中禁止改业务字段。
+4. 不要在开放 API 里循环调用。权限仍用登录用户。
+5. 前端工单列表显示中文状态、当前审批人（可复用 runtime 的 currentApprover 思路，按 process_inst_id 查）。
+
+约束：Java 8，事务边界要清楚（提交失败工单不能变成审批中）。写明改了哪些方法和测试步骤（用现有 leave_approve 流程绑一种工单类型）。
+
+
+第 4 步：列表页配置 + 通用列表运行时
+为 myworkflow 工单增加「可配置列表」，数据库 PostgreSQL。
+
+已有 tk_ticket.form_data jsonb、tk_field、工单类型编码。表单设计器已接入。若 StudioOne 不提供列表画布，不要硬接，做字段勾选式列表配置即可。
+
+请实现：
+1. 表 tk_list_ui（type_id, schema jsonb, version）。schema 约定：columns[{field, title, width, from: main|json}]、filters[{field, op}]、rowActions[]。
+2. 配置页：按 tk_field + 主表字段（ticket_no/title/status/createTime）勾选列和筛选，保存。
+3. 运行时通用列表：路由 /tickets/:typeCode。查询 API 只允许 schema 里出现的字段作为筛选，防止任意 jsonb 注入。status、ticket_no、title 走主列；扩展字段用 form_data->>'key'。分页沿用 PageResult。
+4. 行操作：查看、编辑（仅 DRAFT/REJECTED）、提交审批、删除草稿。按钮先全部显示，权限下一步再收。
+5. 状态显示复用 frontend/src/utils/status.ts 的思路，工单状态单独映射，不要和流程 RUNNING 混用一套英文。
+
+不要改审批流核心。完成后给出配置 JSON 示例和一条筛选 SQL 示例。
+
+
+第 5 步：详情 / 弹窗配置 + 通用详情运行时
+
+为 myworkflow 工单增加可配置详情/弹窗，不要重做表单设计器。
+
+已有 TicketForm 运行时、tk_form_ui、ApprovalTimeline、工单状态机和 process_inst_id。
+
+请实现：
+1. tk_detail_ui（type_id, schema jsonb）。schema：sections[{title, fields[]}]、showTimeline、actions[]。
+2. 配置页用区块+字段多选即可；有 StudioOne 页面设计器再包一层，没有则不要引入新画布。
+3. 通用详情页 /tickets/:typeCode/:id：按 sections 渲染；可编字段仅 DRAFT/REJECTED；IN_APPROVAL 全只读。有 process_inst_id 时展示审批轨迹。
+4. 新建/编辑尽量复用 TicketForm，detail schema 只控制「展示哪些、是否只读、按钮」，不要存第二份字段控件类型。
+5. 与第 4 步列表的「查看」跳转打通。
+
+约束：Java 8、Vue3。不改 Flowable。说明 schema 示例和验收点。
+
+
+第 6 步：菜单 + 权限（含按钮和数据范围）
+
+给 myworkflow 补后台菜单与权限，覆盖工单模块，不要改变审批待办的候选人规则。
+
+现有 sys_role、sys_user_role、admin_flag，前端路由基本写死。需要真正的 RBAC。
+
+请实现：
+1. sys_menu、sys_role_menu 表及管理页：树形菜单、角色勾选菜单。按钮类型菜单用 perm 编码。
+2. 登录接口返回 menus + perms。前端按 menus 生成侧栏，路由加权限守卫；按钮 v-if="hasPerm('ticket:submit')"。
+3. 后端自定义注解 + 拦截：工单创建/提交/删除等 API 校验 perm。admin_flag=1 放行。
+4. 工单列表数据范围：角色上 data_scope：ALL / SELF（starter_id=当前用户）。先不要做自定义 SQL 数据权限。
+5. 为每个 tk_type 自动或手动挂一条菜单到「工单」目录，路径 /tickets/{typeCode}。
+6. /runtime/** 待办办理仍只校验任务候选人，不要用 ticket:submit 去卡审批人。
+
+Java 8、Spring Security 已有 JWT。完成后给一个「销售角色只能看自己的某种工单」的配置说明。
+
+
+第 7 步：附件、编号、配置发布（可当收尾）
+
+工单低代码收尾，基于已有 tk_* 与设计器。
+
+请实现且保持小步：
+1. 附件：上传接口、tk_ticket_file，表单 file 字段存文件 id 列表；PostgreSQL。
+2. tk_type 上编号规则（前缀+日期+流水）；提交审批前必须已有 ticket_no。
+3. tk_form_ui / tk_list_ui / tk_detail_ui 增加 status：DRAFT/PUBLISHED。设计器保存默认为草稿；「发布」后运行时用 PUBLISHED。在途工单仍用创建时的 schema 版本号字段 schema_version 存在 tk_ticket 上（创建时写入）。
+4. 类型上绑定的 processKey 必须在 wf_process_def 且 status=已发布。
+
+不要重构审批。给出验证清单。

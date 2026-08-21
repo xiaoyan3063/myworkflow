@@ -1,0 +1,31 @@
+package com.myworkflow.module.ticket.entity;
+
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableName;
+import com.myworkflow.common.entity.BaseEntity;
+import com.myworkflow.common.mybatis.JsonbMapTypeHandler;
+import lombok.Data;
+import lombok.EqualsAndHashCode;
+
+import java.util.Map;
+
+@Data
+@EqualsAndHashCode(callSuper = true)
+@TableName(value = "tk_ticket", autoResultMap = true)
+public class TkTicket extends BaseEntity {
+    private Long typeId;
+    private String ticketNo;
+    private String title;
+    /** 本步只允许 DRAFT */
+    private String status;
+    private Long starterId;
+    private String starterName;
+    private String processInstId;
+    @TableField(value = "form_data", typeHandler = JsonbMapTypeHandler.class)
+    private Map<String, Object> formData;
+
+    @TableField(exist = false)
+    private String typeName;
+    @TableField(exist = false)
+    private String typeCode;
+}

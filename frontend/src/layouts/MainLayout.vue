@@ -23,6 +23,11 @@
           <el-menu-item index="/process">流程管理</el-menu-item>
           <el-menu-item index="/forms">表单管理</el-menu-item>
         </el-sub-menu>
+        <el-sub-menu index="ticket">
+          <template #title><el-icon><Document /></el-icon><span>工单</span></template>
+          <el-menu-item index="/ticket-types">工单类型</el-menu-item>
+          <el-menu-item index="/tickets">工单列表</el-menu-item>
+        </el-sub-menu>
         <el-sub-menu index="system">
           <template #title><el-icon><OfficeBuilding /></el-icon><span>组织权限</span></template>
           <el-menu-item index="/users">用户管理</el-menu-item>

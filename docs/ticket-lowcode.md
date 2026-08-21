@@ -6,7 +6,7 @@
 ## 工单与流程的关系
 
 ```
-工单 tk_ticket（尚未建表，第 1 步才落地）
+工单 tk_ticket
     │  ticket_no  ────────────►  流程实例 businessKey
     │  process_inst_id  ◄──────  Flowable 实例 ID（提交审批后回写）
     │  form_data        ──────►  start 时拷贝为流程变量（审批快照）
@@ -92,9 +92,9 @@
 }
 ```
 
-- `designer`：接入后填写实际产品名，未知时保持 `"pending"`。
-- `raw`：设计器原生导出的整段 JSON/DSL，原样存，便于二次打开画布。运行时 **优先读 `fields`**。
-- `type` 先对齐现有审批表单：`input` / `textarea` / `number` / `select` / `user` / `users`，接入后按映射表扩充（日期、附件等）。
+- `designer`：当前为 `FcDesigner`。
+- `raw`：设计器原生 rule 数组，二次打开画布用。运行时 **优先读 `raw`，没有再按 `fields` 生成**。
+- `type`：`input` / `textarea` / `number` / `select` / `date` / `user` / `users`。
 
 ### listSchema（列表）
 
@@ -150,18 +150,22 @@
 - `showTimeline`：有 `process_inst_id` 时展示现有审批轨迹组件。
 - `actions` 是否可点由工单状态 + 权限共同决定，配置只表示「这个页面要不要露出这个按钮」。
 
-## 设计器接入占位（第 2 步再填）
+## 表单设计器（第 2 步）
 
-| 项 | 占位 |
-|----|------|
-| 产品名 | `pending`（StudioOne 或 Vue3 兼容同类） |
-| npm 包 | 未定 |
-| 设计器组件 | 未定，工单类型配置页内嵌 |
-| 运行时渲染器 | 未定，工单新建/编辑复用 |
-| schema 导出 | 写入 `formSchema.raw`，并映射为 `formSchema.fields` |
-| 人员字段数据源 | 仍用本系统 `/system/users/simple`，值为本系统用户 ID |
+接入 **FcDesigner**（`@form-create/designer` + `@form-create/element-ui`），只做「画表单 + 填表单」。
 
-未拿到官方文档前，禁止在代码里编造组件名、事件名、配置项。
+- 打开：菜单 **工单 → 工单类型 → 设计表单**，路由 `/ticket-types/{id}/form`。
+- 存哪：`tk_form_ui.schema`（jsonb）。`raw` 是设计器 rule 数组，`fields` 是解析后的稳定字段列表；每次保存 `tk_form_ui.version` +1。
+- 同步：保存时按 `field_key` upsert `tk_field`（已有行保留 ID），画布上删掉的字段会从 `tk_field` 删除。已填工单 `form_data` 不自动迁移，缺键当空。
+- 填表：工单新建/编辑用 `TicketForm`，读 `schema.raw` 渲染。人员控件数据源 `/system/users/simple`。
+- 不改：BPMN 设计器、`wf_form_def`、审批待办页。
+
+### 验证
+
+1. 新建工单类型，打开设计表单，拖入单行/多行/数字/下拉/日期/人员单选/人员多选，保存。
+2. 看库：`tk_form_ui.schema.raw` 有内容，`version` 递增；`tk_field` 有对应 `field_key`，再保存 ID 不变。
+3. 工单列表新建草稿，表单与设计一致，保存后再次打开值还在。
+4. 旧草稿缺新字段时显示空，不报错。
 
 ## PostgreSQL
 
