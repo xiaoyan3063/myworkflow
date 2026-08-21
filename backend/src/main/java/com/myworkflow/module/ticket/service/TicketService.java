@@ -10,11 +10,13 @@ import com.myworkflow.module.process.dto.StartProcessRequest;
 import com.myworkflow.module.process.service.ProcessRuntimeService;
 import com.myworkflow.module.system.entity.SysUser;
 import com.myworkflow.module.system.mapper.SysUserMapper;
+import com.myworkflow.module.ticket.entity.TkDetailUi;
 import com.myworkflow.module.ticket.entity.TkField;
 import com.myworkflow.module.ticket.entity.TkFormUi;
 import com.myworkflow.module.ticket.entity.TkListUi;
 import com.myworkflow.module.ticket.entity.TkTicket;
 import com.myworkflow.module.ticket.entity.TkType;
+import com.myworkflow.module.ticket.mapper.TkDetailUiMapper;
 import com.myworkflow.module.ticket.mapper.TkFieldMapper;
 import com.myworkflow.module.ticket.mapper.TkFormUiMapper;
 import com.myworkflow.module.ticket.mapper.TkListUiMapper;
@@ -53,6 +55,7 @@ public class TicketService {
     private final TkFieldMapper fieldMapper;
     private final TkFormUiMapper formUiMapper;
     private final TkListUiMapper listUiMapper;
+    private final TkDetailUiMapper detailUiMapper;
     private final TkTicketMapper ticketMapper;
     private final SysUserMapper userMapper;
     private final ObjectMapper objectMapper;
@@ -115,6 +118,11 @@ public class TicketService {
             listUi.setVersion(1);
             listUi.setSchema(TicketListSchema.defaultSchema());
             listUiMapper.insert(listUi);
+            TkDetailUi detailUi = new TkDetailUi();
+            detailUi.setTypeId(type.getId());
+            detailUi.setVersion(1);
+            detailUi.setSchema(TicketDetailSchema.defaultSchema(Collections.<TkField>emptyList()));
+            detailUiMapper.insert(detailUi);
         } else {
             typeMapper.updateById(type);
         }
@@ -131,6 +139,7 @@ public class TicketService {
         fieldMapper.delete(new LambdaQueryWrapper<TkField>().eq(TkField::getTypeId, id));
         formUiMapper.delete(new LambdaQueryWrapper<TkFormUi>().eq(TkFormUi::getTypeId, id));
         listUiMapper.delete(new LambdaQueryWrapper<TkListUi>().eq(TkListUi::getTypeId, id));
+        detailUiMapper.delete(new LambdaQueryWrapper<TkDetailUi>().eq(TkDetailUi::getTypeId, id));
     }
 
     public TkType typeByCode(String typeCode) {
@@ -299,6 +308,45 @@ public class TicketService {
             listUiMapper.insert(ui);
         } else {
             listUiMapper.updateById(ui);
+        }
+        return ui;
+    }
+
+    public TkDetailUi getDetailUi(Long typeId) {
+        typeDetail(typeId);
+        TkDetailUi ui = detailUiMapper.selectOne(new LambdaQueryWrapper<TkDetailUi>()
+                .eq(TkDetailUi::getTypeId, typeId)
+                .last("LIMIT 1"));
+        if (ui == null) {
+            ui = new TkDetailUi();
+            ui.setTypeId(typeId);
+            ui.setVersion(1);
+            ui.setSchema(TicketDetailSchema.defaultSchema(listFields(typeId)));
+            detailUiMapper.insert(ui);
+        }
+        return ui;
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public TkDetailUi saveDetailUi(Long typeId, Map<String, Object> body) {
+        typeDetail(typeId);
+        Map<String, Object> schema = TicketDetailSchema.normalize(body, listFields(typeId));
+        TkDetailUi ui = detailUiMapper.selectOne(new LambdaQueryWrapper<TkDetailUi>()
+                .eq(TkDetailUi::getTypeId, typeId)
+                .last("LIMIT 1"));
+        if (ui == null) {
+            ui = new TkDetailUi();
+            ui.setTypeId(typeId);
+            ui.setVersion(0);
+        }
+        int next = (ui.getVersion() == null ? 0 : ui.getVersion()) + 1;
+        schema.put("version", next);
+        ui.setVersion(next);
+        ui.setSchema(schema);
+        if (ui.getId() == null) {
+            detailUiMapper.insert(ui);
+        } else {
+            detailUiMapper.updateById(ui);
         }
         return ui;
     }

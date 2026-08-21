@@ -18,6 +18,7 @@ const props = defineProps<{
   schema?: any
   modelValue?: Record<string, any>
   disabled?: boolean
+  onlyFields?: string[]
 }>()
 
 const emit = defineEmits<{
@@ -27,7 +28,7 @@ const emit = defineEmits<{
 const fapi = ref<any>()
 const inner = ref<Record<string, any>>({ ...(props.modelValue || {}) })
 
-const rule = computed(() => rulesFromSchema(props.schema))
+const rule = computed(() => rulesFromSchema(props.schema, props.onlyFields))
 const formOption = computed(() => ({
   ...silentFormOption,
   form: { ...(silentFormOption.form || {}), disabled: !!props.disabled },

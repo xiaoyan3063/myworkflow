@@ -262,6 +262,41 @@ LIMIT 10 OFFSET 0;
 4. 用已通过 + 扩展字段筛选，结果对；多传一个未配置参数结果不变。
 5. 草稿可编辑/提交/删除；审批中只能查看。
 
+## 详情配置（第 5 步）
+
+没有页面画布，用 **区块 + 字段多选**。控件类型仍读 `tk_form_ui`，详情 schema 不存第二份 type。
+
+- 表 `tk_detail_ui`（`type_id`, `schema` jsonb, `version`）。每次保存 `version` +1。
+- 打开：工单类型 → **配置详情**，路由 `/ticket-types/{id}/detail`。
+- 运行时：列表「查看」仍进 `/tickets/{typeCode}/{id}`，按 `sections` 分组渲染。
+- `showTimeline=true` 且有 `process_inst_id` 时右侧展示 `ApprovalTimeline`。
+- 可编：仅 `DRAFT` / `REJECTED`（标题 + 表单字段）。`IN_APPROVAL` / `APPROVED` 全只读。
+- `actions`：`save` / `submit` / `cancel` 只控制是否露出按钮，能不能点仍看工单状态。新建/编辑弹窗继续用 `TicketForm`。
+
+### schema 示例
+
+```json
+{
+  "version": 1,
+  "designer": "checkbox",
+  "raw": null,
+  "showTimeline": true,
+  "sections": [
+    { "title": "基本信息", "fields": ["ticket_no", "title", "status", "starterName", "createTime"] },
+    { "title": "申请内容", "fields": ["type", "days", "reson"] }
+  ],
+  "actions": ["save", "submit"]
+}
+```
+
+### 验收点
+
+1. 重启后端，确认 `tk_detail_ui` 已建。
+2. 配置详情：两个区块分别勾主表字段和表单字段，打开 `showTimeline`，保存。
+3. 从 `/tickets/LEAVE` 点查看，详情按区块分组；草稿可改标题和表单并保存、提交。
+4. 审批中打开同一页：字段只读，保存/提交按钮不出现，有轨迹则显示。
+5. 关掉 `showTimeline` 再保存，详情页不再出现右侧轨迹栏。
+
 ## PostgreSQL
 
 默认 profile 仍是 `h2`，避免没装库时起不来。切 PG 的改法见仓库根目录 `README.md`「切换 PostgreSQL」。  

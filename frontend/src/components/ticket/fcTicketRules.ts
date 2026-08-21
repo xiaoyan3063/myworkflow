@@ -72,11 +72,33 @@ export function dropEmptyOptions(rule: any): any {
   return out
 }
 
-export function rulesFromSchema(schema: any): any[] {
-  if (Array.isArray(schema?.raw) && schema.raw.length) {
-    return dropEmptyOptions(schema.raw)
+export function filterRulesByFields(rules: any[], fields?: string[]): any[] {
+  if (!fields || !fields.length) return dropEmptyOptions(rules || [])
+  const allow = new Set(fields)
+  return pickRules(dropEmptyOptions(rules || []), allow)
+}
+
+function pickRules(rules: any[], allow: Set<string>): any[] {
+  const out: any[] = []
+  for (const r of rules || []) {
+    if (!r || typeof r !== 'object') continue
+    if (r.field && allow.has(r.field)) {
+      out.push(r)
+      continue
+    }
+    if (Array.isArray(r.children)) {
+      const children = pickRules(r.children, allow)
+      if (children.length) out.push({ ...r, children })
+    }
   }
-  return (schema?.fields || []).map((f: any) => {
+  return out
+}
+
+export function rulesFromSchema(schema: any, onlyFields?: string[]): any[] {
+  if (Array.isArray(schema?.raw) && schema.raw.length) {
+    return filterRulesByFields(schema.raw, onlyFields)
+  }
+  const mapped = (schema?.fields || []).map((f: any) => {
     const type = toFcType(f.type)
     const rule: any = {
       type,
@@ -93,6 +115,7 @@ export function rulesFromSchema(schema: any): any[] {
     }
     return rule
   })
+  return filterRulesByFields(mapped, onlyFields)
 }
 
 function toFcType(type: string) {

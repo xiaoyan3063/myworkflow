@@ -4,6 +4,7 @@ import com.myworkflow.common.result.PageResult;
 import com.myworkflow.common.result.R;
 import com.myworkflow.module.ticket.entity.TkField;
 import com.myworkflow.module.ticket.entity.TkFormUi;
+import com.myworkflow.module.ticket.entity.TkDetailUi;
 import com.myworkflow.module.ticket.entity.TkListUi;
 import com.myworkflow.module.ticket.entity.TkType;
 import com.myworkflow.module.ticket.service.TicketService;
@@ -104,5 +105,17 @@ public class TicketTypeController {
     @PutMapping("/{id}/list-ui")
     public R<TkListUi> saveListUi(@PathVariable Long id, @RequestBody Map<String, Object> body) {
         return R.ok(ticketService.saveListUi(id, body));
+    }
+
+    @ApiOperation("详情配置 schema")
+    @GetMapping("/{id}/detail-ui")
+    public R<TkDetailUi> detailUi(@PathVariable Long id) {
+        return R.ok(ticketService.getDetailUi(id));
+    }
+
+    @ApiOperation("保存详情配置")
+    @PutMapping("/{id}/detail-ui")
+    public R<TkDetailUi> saveDetailUi(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+        return R.ok(ticketService.saveDetailUi(id, body));
     }
 }

@@ -32,6 +32,7 @@ const router = createRouter({
         { path: 'ticket-types', name: 'ticketTypes', component: () => import('@/views/ticket/TicketTypeView.vue'), meta: { title: '工单类型' } },
         { path: 'ticket-types/:id/form', name: 'ticketFormDesign', component: () => import('@/views/ticket/TicketFormDesignerView.vue'), meta: { title: '表单设计' } },
         { path: 'ticket-types/:id/list', name: 'ticketListDesign', component: () => import('@/views/ticket/TicketListDesignerView.vue'), meta: { title: '列表配置' } },
+        { path: 'ticket-types/:id/detail', name: 'ticketDetailDesign', component: () => import('@/views/ticket/TicketDetailDesignerView.vue'), meta: { title: '详情配置' } },
         { path: 'tickets', name: 'tickets', component: () => import('@/views/ticket/TicketListView.vue'), meta: { title: '工单列表' } },
         { path: 'tickets/:typeCode/:id', name: 'ticketDetail', component: () => import('@/views/ticket/TicketDetailView.vue'), meta: { title: '工单详情' } },
         { path: 'tickets/:typeCode', name: 'ticketTypedList', component: () => import('@/views/ticket/TicketTypedListView.vue'), meta: { title: '工单列表' } },
