@@ -8,33 +8,8 @@
           <small>Approval OS</small>
         </div>
       </div>
-      <el-menu :default-active="route.path" router class="menu">
-        <el-menu-item index="/dashboard"><el-icon><Odometer /></el-icon><span>工作台</span></el-menu-item>
-        <el-sub-menu index="approval">
-          <template #title><el-icon><Checked /></el-icon><span>审批中心</span></template>
-          <el-menu-item index="/todo">我的待办</el-menu-item>
-          <el-menu-item index="/done">我的已办</el-menu-item>
-          <el-menu-item index="/started">我发起的</el-menu-item>
-          <el-menu-item index="/cc">抄送我的</el-menu-item>
-          <el-menu-item index="/start">发起审批</el-menu-item>
-        </el-sub-menu>
-        <el-sub-menu index="design">
-          <template #title><el-icon><SetUp /></el-icon><span>流程设计</span></template>
-          <el-menu-item index="/process">流程管理</el-menu-item>
-          <el-menu-item index="/forms">表单管理</el-menu-item>
-        </el-sub-menu>
-        <el-sub-menu index="ticket">
-          <template #title><el-icon><Document /></el-icon><span>工单</span></template>
-          <el-menu-item index="/ticket-types">工单类型</el-menu-item>
-          <el-menu-item index="/tickets">工单列表</el-menu-item>
-        </el-sub-menu>
-        <el-sub-menu index="system">
-          <template #title><el-icon><OfficeBuilding /></el-icon><span>组织权限</span></template>
-          <el-menu-item index="/users">用户管理</el-menu-item>
-          <el-menu-item index="/depts">部门管理</el-menu-item>
-          <el-menu-item index="/roles">角色管理</el-menu-item>
-        </el-sub-menu>
-        <el-menu-item index="/messages"><el-icon><Bell /></el-icon><span>消息中心</span></el-menu-item>
+      <el-menu :default-active="activeMenu" router class="menu">
+        <SideMenuItems :items="userStore.profile?.menus || []" />
       </el-menu>
     </aside>
     <section class="main">
@@ -72,16 +47,29 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import http from '@/utils/http'
+import SideMenuItems from './SideMenuItems.vue'
 
 const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
 const unread = ref(0)
 const now = ref(new Date().toLocaleString())
+
+const activeMenu = computed(() => {
+  const p = route.path
+  if (p.startsWith('/tickets/')) {
+    const segs = p.split('/').filter(Boolean)
+    if (segs.length >= 2) return `/tickets/${segs[1]}`
+  }
+  if (p.startsWith('/ticket-types')) return '/ticket-types'
+  if (p.startsWith('/process')) return '/process'
+  if (p.startsWith('/forms')) return '/forms'
+  return p
+})
 
 onMounted(async () => {
   setInterval(() => { now.value = new Date().toLocaleString() }, 1000)

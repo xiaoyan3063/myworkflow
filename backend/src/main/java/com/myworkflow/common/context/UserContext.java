@@ -11,6 +11,10 @@ public class UserContext {
     private Long tenantId;
     private Long deptId;
     private boolean admin;
+    private String dataScope;
+    private java.util.Set<String> perms;
+    /** DEPT 范围下允许看到的发起人 ID（本部门及下级，不含上级/总部） */
+    private java.util.List<Long> scopeUserIds;
 
     private static final ThreadLocal<UserContext> HOLDER = new ThreadLocal<>();
 

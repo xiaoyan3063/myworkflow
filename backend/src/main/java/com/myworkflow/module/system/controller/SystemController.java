@@ -6,13 +6,18 @@ import com.myworkflow.common.exception.BizException;
 import com.myworkflow.common.result.PageResult;
 import com.myworkflow.common.result.R;
 import com.myworkflow.module.system.entity.SysDept;
+import com.myworkflow.module.system.entity.SysMenu;
 import com.myworkflow.module.system.entity.SysRole;
 import com.myworkflow.module.system.entity.SysUser;
 import com.myworkflow.module.system.entity.SysUserRole;
+import com.myworkflow.module.system.entity.SysRoleMenu;
 import com.myworkflow.module.system.mapper.SysDeptMapper;
 import com.myworkflow.module.system.mapper.SysRoleMapper;
+import com.myworkflow.module.system.mapper.SysRoleMenuMapper;
 import com.myworkflow.module.system.mapper.SysUserMapper;
 import com.myworkflow.module.system.mapper.SysUserRoleMapper;
+import com.myworkflow.module.system.service.MenuService;
+import com.myworkflow.security.RequiresPerm;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import lombok.RequiredArgsConstructor;
@@ -33,6 +38,8 @@ public class SystemController {
     private final SysDeptMapper deptMapper;
     private final SysRoleMapper roleMapper;
     private final SysUserRoleMapper userRoleMapper;
+    private final SysRoleMenuMapper roleMenuMapper;
+    private final MenuService menuService;
     private final PasswordEncoder passwordEncoder;
 
     @ApiOperation("用户分页")
@@ -140,8 +147,18 @@ public class SystemController {
     }
 
     @ApiOperation("保存角色")
+    @RequiresPerm("sys:role")
     @PostMapping("/roles")
     public R<Void> saveRole(@RequestBody SysRole role) {
+        if (!StringUtils.hasText(role.getDataScope())) {
+            role.setDataScope("ALL");
+        }
+        String scope = role.getDataScope().trim().toUpperCase();
+        if ("SELF".equals(scope) || "DEPT".equals(scope)) {
+            role.setDataScope(scope);
+        } else {
+            role.setDataScope("ALL");
+        }
         if (role.getId() == null) {
             if (role.getStatus() == null) role.setStatus(1);
             roleMapper.insert(role);
@@ -152,9 +169,46 @@ public class SystemController {
     }
 
     @ApiOperation("删除角色")
+    @RequiresPerm("sys:role")
     @DeleteMapping("/roles/{id}")
     public R<Void> deleteRole(@PathVariable Long id) {
         roleMapper.deleteById(id);
+        roleMenuMapper.delete(new LambdaQueryWrapper<SysRoleMenu>().eq(SysRoleMenu::getRoleId, id));
+        return R.ok();
+    }
+
+    @ApiOperation("角色菜单ID")
+    @GetMapping("/roles/{id}/menus")
+    public R<List<Long>> roleMenus(@PathVariable Long id) {
+        return R.ok(menuService.roleMenuIds(id));
+    }
+
+    @ApiOperation("保存角色菜单")
+    @RequiresPerm("sys:role")
+    @PostMapping("/roles/{id}/menus")
+    public R<Void> saveRoleMenus(@PathVariable Long id, @RequestBody List<Long> menuIds) {
+        menuService.saveRoleMenus(id, menuIds);
+        return R.ok();
+    }
+
+    @ApiOperation("菜单树")
+    @GetMapping("/menus/tree")
+    public R<List<SysMenu>> menuTree() {
+        return R.ok(menuService.treeAll());
+    }
+
+    @ApiOperation("保存菜单")
+    @RequiresPerm("sys:menu")
+    @PostMapping("/menus")
+    public R<SysMenu> saveMenu(@RequestBody SysMenu menu) {
+        return R.ok(menuService.save(menu));
+    }
+
+    @ApiOperation("删除菜单")
+    @RequiresPerm("sys:menu")
+    @DeleteMapping("/menus/{id}")
+    public R<Void> deleteMenu(@PathVariable Long id) {
+        menuService.delete(id);
         return R.ok();
     }
 

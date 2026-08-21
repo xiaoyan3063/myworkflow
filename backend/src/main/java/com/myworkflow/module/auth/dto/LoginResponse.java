@@ -16,4 +16,6 @@ public class LoginResponse {
     private Long deptId;
     private Boolean admin;
     private List<String> roles;
+    private List<String> perms;
+    private Object menus;
 }

@@ -16,8 +16,32 @@ export const useUserStore = defineStore('user', () => {
 
   async function fetchMe() {
     const res: any = await http.get('/auth/me')
-    profile.value = res.data
+    profile.value = { ...(profile.value || {}), ...res.data }
     return res.data
+  }
+
+  function hasPerm(perm: string) {
+    if (!perm) return true
+    if (profile.value?.admin) return true
+    const perms: string[] = profile.value?.perms || []
+    return perms.indexOf(perm) >= 0
+  }
+
+  function canAccess(path: string) {
+    if (profile.value?.admin) return true
+    const always = ['/dashboard', '/messages']
+    if (always.some((p) => path === p || path.startsWith(p + '/'))) return true
+    if (path.startsWith('/task/') || path.startsWith('/instance/')) return true
+    const paths: string[] = []
+    walk(profile.value?.menus || [], paths)
+    return paths.some((mp) => mp && (path === mp || path.startsWith(mp + '/')))
+  }
+
+  function walk(nodes: any[], out: string[]) {
+    for (const n of nodes || []) {
+      if (n.path) out.push(n.path)
+      if (n.children && n.children.length) walk(n.children, out)
+    }
   }
 
   function logout() {
@@ -26,5 +50,5 @@ export const useUserStore = defineStore('user', () => {
     localStorage.removeItem('mw_token')
   }
 
-  return { token, profile, login, fetchMe, logout }
+  return { token, profile, login, fetchMe, logout, hasPerm, canAccess }
 })

@@ -5,7 +5,7 @@
         <h1 class="page-title">工单列表</h1>
         <p class="page-sub">草稿可提交审批；审批中不可改字段</p>
       </div>
-      <el-button type="primary" :disabled="!typeId" @click="openEdit()">新建草稿</el-button>
+      <el-button v-if="hasPerm('ticket:create')" type="primary" :disabled="!typeId" @click="openEdit()">新建草稿</el-button>
     </div>
     <el-form inline>
       <el-form-item label="工单类型">
@@ -37,9 +37,9 @@
       <el-table-column label="操作" width="220" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="$router.push(`/tickets/${row.typeCode}/${row.id}`)">查看</el-button>
-          <el-button v-if="canEdit(row)" link type="primary" @click="openEdit(row)">编辑</el-button>
-          <el-button v-if="canSubmit(row)" link type="success" @click="submit(row)">提交</el-button>
-          <el-button v-if="row.status === 'DRAFT'" link type="danger" @click="remove(row)">删除</el-button>
+          <el-button v-if="canEdit(row) && hasPerm('ticket:update')" link type="primary" @click="openEdit(row)">编辑</el-button>
+          <el-button v-if="canSubmit(row) && hasPerm('ticket:submit')" link type="success" @click="submit(row)">提交</el-button>
+          <el-button v-if="row.status === 'DRAFT' && hasPerm('ticket:delete')" link type="danger" @click="remove(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -68,6 +68,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import http from '@/utils/http'
 import TicketForm from '@/components/ticket/TicketForm.vue'
 import { ticketStatusText, ticketStatusTone } from '@/utils/status'
+import { hasPerm } from '@/utils/permission'
 
 const types = ref<any[]>([])
 const list = ref<any[]>([])

@@ -23,6 +23,7 @@ import java.util.Collections;
 public class JwtAuthFilter extends OncePerRequestFilter {
 
     private final JwtTokenProvider jwtTokenProvider;
+    private final PermissionService permissionService;
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
@@ -42,6 +43,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 ctx.setTenantId(tenantId);
                 ctx.setAdmin(admin);
                 UserContext.set(ctx);
+                permissionService.fillContext(ctx);
 
                 UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(
                         userId, null,

@@ -100,7 +100,7 @@
 1. sys_menu、sys_role_menu 表及管理页：树形菜单、角色勾选菜单。按钮类型菜单用 perm 编码。
 2. 登录接口返回 menus + perms。前端按 menus 生成侧栏，路由加权限守卫；按钮 v-if="hasPerm('ticket:submit')"。
 3. 后端自定义注解 + 拦截：工单创建/提交/删除等 API 校验 perm。admin_flag=1 放行。
-4. 工单列表数据范围：角色上 data_scope：ALL / SELF（starter_id=当前用户）。先不要做自定义 SQL 数据权限。
+4. 工单列表数据范围：角色上 data_scope：ALL / DEPT（本部门及下级、不含上级总部） / SELF（starter_id=当前用户）。先不要做自定义 SQL 数据权限。
 5. 为每个 tk_type 自动或手动挂一条菜单到「工单」目录，路径 /tickets/{typeCode}。
 6. /runtime/** 待办办理仍只校验任务候选人，不要用 ticket:submit 去卡审批人。
 

@@ -55,6 +55,9 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import http from '@/utils/http'
+import { useUserStore } from '@/stores/user'
+
+const userStore = useUserStore()
 
 const list = ref<any[]>([])
 const total = ref(0)
@@ -84,6 +87,7 @@ async function saveType() {
   ElMessage.success('已保存')
   typeVisible.value = false
   load()
+  userStore.fetchMe().catch(() => undefined)
 }
 
 async function removeType(row: any) {
@@ -91,6 +95,7 @@ async function removeType(row: any) {
   await http.delete(`/ticket/types/${row.id}`)
   ElMessage.success('已删除')
   load()
+  userStore.fetchMe().catch(() => undefined)
 }
 
 onMounted(load)

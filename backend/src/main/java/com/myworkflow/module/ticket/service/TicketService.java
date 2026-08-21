@@ -10,6 +10,7 @@ import com.myworkflow.module.process.dto.StartProcessRequest;
 import com.myworkflow.module.process.service.ProcessRuntimeService;
 import com.myworkflow.module.system.entity.SysUser;
 import com.myworkflow.module.system.mapper.SysUserMapper;
+import com.myworkflow.module.system.service.MenuService;
 import com.myworkflow.module.ticket.entity.TkDetailUi;
 import com.myworkflow.module.ticket.entity.TkField;
 import com.myworkflow.module.ticket.entity.TkFormUi;
@@ -22,6 +23,7 @@ import com.myworkflow.module.ticket.mapper.TkFormUiMapper;
 import com.myworkflow.module.ticket.mapper.TkListUiMapper;
 import com.myworkflow.module.ticket.mapper.TkTicketMapper;
 import com.myworkflow.module.ticket.mapper.TkTypeMapper;
+import com.myworkflow.security.PermissionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -60,6 +62,8 @@ public class TicketService {
     private final SysUserMapper userMapper;
     private final ObjectMapper objectMapper;
     private final ProcessRuntimeService processRuntimeService;
+    private final MenuService menuService;
+    private final PermissionService permissionService;
 
     public PageResult<TkType> typePage(long page, long size, String keyword) {
         Page<TkType> p = typeMapper.selectPage(new Page<>(page, size),
@@ -126,6 +130,7 @@ public class TicketService {
         } else {
             typeMapper.updateById(type);
         }
+        menuService.syncTypeMenu(type);
         return type;
     }
 
@@ -135,11 +140,14 @@ public class TicketService {
         if (tickets != null && tickets > 0) {
             throw new BizException("该类型下已有工单，不能删除");
         }
+        TkType type = typeMapper.selectById(id);
+        String code = type == null ? null : type.getTypeCode();
         typeMapper.deleteById(id);
         fieldMapper.delete(new LambdaQueryWrapper<TkField>().eq(TkField::getTypeId, id));
         formUiMapper.delete(new LambdaQueryWrapper<TkFormUi>().eq(TkFormUi::getTypeId, id));
         listUiMapper.delete(new LambdaQueryWrapper<TkListUi>().eq(TkListUi::getTypeId, id));
         detailUiMapper.delete(new LambdaQueryWrapper<TkDetailUi>().eq(TkDetailUi::getTypeId, id));
+        menuService.removeTypeMenu(code);
     }
 
     public TkType typeByCode(String typeCode) {
@@ -361,6 +369,7 @@ public class TicketService {
 
         LambdaQueryWrapper<TkTicket> w = new LambdaQueryWrapper<TkTicket>()
                 .eq(TkTicket::getTypeId, type.getId());
+        applyDataScope(w);
         if (params != null) {
             for (Map.Entry<String, String> e : params.entrySet()) {
                 String rawKey = e.getKey();
@@ -474,14 +483,15 @@ public class TicketService {
     }
 
     public PageResult<TkTicket> ticketPage(long page, long size, Long typeId, String keyword) {
-        Page<TkTicket> p = ticketMapper.selectPage(new Page<>(page, size),
-                new LambdaQueryWrapper<TkTicket>()
-                        .eq(typeId != null, TkTicket::getTypeId, typeId)
-                        .and(StringUtils.hasText(keyword), w -> w
-                                .like(TkTicket::getTitle, keyword)
-                                .or()
-                                .like(TkTicket::getTicketNo, keyword))
-                        .orderByDesc(TkTicket::getCreateTime));
+        LambdaQueryWrapper<TkTicket> w = new LambdaQueryWrapper<TkTicket>()
+                .eq(typeId != null, TkTicket::getTypeId, typeId)
+                .and(StringUtils.hasText(keyword), qw -> qw
+                        .like(TkTicket::getTitle, keyword)
+                        .or()
+                        .like(TkTicket::getTicketNo, keyword))
+                .orderByDesc(TkTicket::getCreateTime);
+        applyDataScope(w);
+        Page<TkTicket> p = ticketMapper.selectPage(new Page<>(page, size), w);
         Map<Long, TkType> types = new HashMap<>();
         for (TkTicket t : p.getRecords()) {
             TkType type = types.computeIfAbsent(t.getTypeId(), id -> typeMapper.selectById(id));
@@ -515,6 +525,7 @@ public class TicketService {
         if (ticket == null) {
             throw new BizException("工单不存在");
         }
+        assertTicketScope(ticket);
         TkType type = typeMapper.selectById(ticket.getTypeId());
         if (type != null) {
             ticket.setTypeName(type.getTypeName());
@@ -618,6 +629,45 @@ public class TicketService {
         ticket.setStarterName(starterName);
         ticketMapper.updateById(ticket);
         return ticketDetail(ticket.getId());
+    }
+
+    private void applyDataScope(LambdaQueryWrapper<TkTicket> w) {
+        if (permissionService.allScope()) {
+            return;
+        }
+        UserContext ctx = UserContext.get();
+        if (permissionService.deptScope()) {
+            List<Long> ids = permissionService.scopeUserIds();
+            if (ids == null || ids.isEmpty()) {
+                w.eq(TkTicket::getStarterId, ctx == null ? -1L : ctx.getUserId());
+            } else {
+                w.in(TkTicket::getStarterId, ids);
+            }
+            return;
+        }
+        w.eq(TkTicket::getStarterId, ctx == null ? -1L : ctx.getUserId());
+    }
+
+    private void assertTicketScope(TkTicket ticket) {
+        if (permissionService.allScope()) {
+            return;
+        }
+        UserContext ctx = UserContext.get();
+        Long uid = ctx == null ? null : ctx.getUserId();
+        Long starter = ticket.getStarterId();
+        if (starter == null) {
+            throw new BizException(403, "无权查看或操作该工单");
+        }
+        if (permissionService.deptScope()) {
+            List<Long> ids = permissionService.scopeUserIds();
+            if (ids != null && ids.contains(starter)) {
+                return;
+            }
+            throw new BizException(403, "无权查看其他部门或总部的工单");
+        }
+        if (uid == null || !starter.equals(uid)) {
+            throw new BizException(403, "无权查看或操作该工单");
+        }
     }
 
     private String nextTicketNo(String typeCode) {

@@ -14,5 +14,7 @@ public class SysRole extends BaseEntity {
     private String roleName;
     private Integer sortNo;
     private Integer status;
+    /** ALL / DEPT / SELF */
+    private String dataScope;
     private String remark;
 }

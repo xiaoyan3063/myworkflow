@@ -4,6 +4,7 @@ import com.myworkflow.common.result.PageResult;
 import com.myworkflow.common.result.R;
 import com.myworkflow.module.ticket.entity.TkTicket;
 import com.myworkflow.module.ticket.service.TicketService;
+import com.myworkflow.security.RequiresPerm;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import lombok.RequiredArgsConstructor;
@@ -46,18 +47,21 @@ public class TicketController {
     }
 
     @ApiOperation("新建草稿")
+    @RequiresPerm("ticket:create")
     @PostMapping
     public R<TkTicket> create(@RequestBody TkTicket ticket) {
         return R.ok(ticketService.createDraft(ticket));
     }
 
     @ApiOperation("更新草稿")
+    @RequiresPerm("ticket:update")
     @PutMapping("/{id}")
     public R<TkTicket> update(@PathVariable Long id, @RequestBody TkTicket ticket) {
         return R.ok(ticketService.updateDraft(id, ticket));
     }
 
     @ApiOperation("删除草稿")
+    @RequiresPerm("ticket:delete")
     @DeleteMapping("/{id}")
     public R<Void> delete(@PathVariable Long id) {
         ticketService.deleteDraft(id);
@@ -65,6 +69,7 @@ public class TicketController {
     }
 
     @ApiOperation("提交审批")
+    @RequiresPerm("ticket:submit")
     @PostMapping("/{id}/submit")
     public R<TkTicket> submit(@PathVariable Long id) {
         return R.ok(ticketService.submit(id));

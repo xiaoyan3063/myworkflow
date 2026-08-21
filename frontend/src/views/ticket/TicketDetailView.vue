@@ -7,13 +7,13 @@
       </div>
       <div class="head-actions">
         <el-button
-          v-if="hasAction('save') && canEdit"
+          v-if="hasAction('save') && canEdit && hasPerm('ticket:update')"
           type="primary"
           :loading="saving"
           @click="save"
         >保存</el-button>
         <el-button
-          v-if="hasAction('submit') && canSubmit"
+          v-if="hasAction('submit') && canSubmit && hasPerm('ticket:submit')"
           type="success"
           :loading="submitting"
           @click="submit"
@@ -31,7 +31,7 @@
             <div v-for="f in mainOf(sec)" :key="f" class="info-cell" :class="{ wide: f === 'processInstId' || f === 'title' }">
               <span class="info-label">{{ mainTitle(f) }}</span>
               <span class="info-value">
-                <el-input v-if="f === 'title' && canEdit" v-model="ticket.title" size="small" />
+                <el-input v-if="f === 'title' && canEdit && hasPerm('ticket:update')" v-model="ticket.title" size="small" />
                 <el-tag v-else-if="f === 'status'" size="small" :type="ticketStatusTone(ticket.status)">
                   {{ ticketStatusText(ticket.status) }}
                 </el-tag>
@@ -48,7 +48,7 @@
             :model-value="formData"
             :schema="formSchema"
             :only-fields="formOf(sec)"
-            :disabled="!canEdit"
+            :disabled="!canEdit || !hasPerm('ticket:update')"
             @update:model-value="patchForm"
           />
         </div>
@@ -70,6 +70,7 @@ import http from '@/utils/http'
 import TicketForm from '@/components/ticket/TicketForm.vue'
 import ApprovalTimeline from '@/components/ApprovalTimeline.vue'
 import { ticketStatusText, ticketStatusTone } from '@/utils/status'
+import { hasPerm } from '@/utils/permission'
 
 const MAIN_TITLE: Record<string, string> = {
   ticket_no: '工单号',

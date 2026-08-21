@@ -8,6 +8,7 @@ import com.myworkflow.module.ticket.entity.TkDetailUi;
 import com.myworkflow.module.ticket.entity.TkListUi;
 import com.myworkflow.module.ticket.entity.TkType;
 import com.myworkflow.module.ticket.service.TicketService;
+import com.myworkflow.security.RequiresPerm;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import lombok.RequiredArgsConstructor;
@@ -51,12 +52,14 @@ public class TicketTypeController {
     }
 
     @ApiOperation("保存类型")
+    @RequiresPerm("ticket:type:save")
     @PostMapping
     public R<TkType> save(@RequestBody TkType type) {
         return R.ok(ticketService.saveType(type));
     }
 
     @ApiOperation("删除类型")
+    @RequiresPerm("ticket:type:delete")
     @DeleteMapping("/{id}")
     public R<Void> delete(@PathVariable Long id) {
         ticketService.deleteType(id);
@@ -70,6 +73,7 @@ public class TicketTypeController {
     }
 
     @ApiOperation("保存字段")
+    @RequiresPerm("ticket:type:save")
     @PostMapping("/{id}/fields")
     public R<TkField> saveField(@PathVariable Long id, @RequestBody TkField field) {
         field.setTypeId(id);
@@ -77,6 +81,7 @@ public class TicketTypeController {
     }
 
     @ApiOperation("删除字段")
+    @RequiresPerm("ticket:type:save")
     @DeleteMapping("/fields/{fieldId}")
     public R<Void> deleteField(@PathVariable Long fieldId) {
         ticketService.deleteField(fieldId);
@@ -90,6 +95,7 @@ public class TicketTypeController {
     }
 
     @ApiOperation("保存表单设计")
+    @RequiresPerm("ticket:type:save")
     @PutMapping("/{id}/form-ui")
     public R<TkFormUi> saveFormUi(@PathVariable Long id, @RequestBody Map<String, Object> body) {
         return R.ok(ticketService.saveFormUi(id, body));
@@ -102,6 +108,7 @@ public class TicketTypeController {
     }
 
     @ApiOperation("保存列表配置")
+    @RequiresPerm("ticket:type:save")
     @PutMapping("/{id}/list-ui")
     public R<TkListUi> saveListUi(@PathVariable Long id, @RequestBody Map<String, Object> body) {
         return R.ok(ticketService.saveListUi(id, body));
@@ -114,6 +121,7 @@ public class TicketTypeController {
     }
 
     @ApiOperation("保存详情配置")
+    @RequiresPerm("ticket:type:save")
     @PutMapping("/{id}/detail-ui")
     public R<TkDetailUi> saveDetailUi(@PathVariable Long id, @RequestBody Map<String, Object> body) {
         return R.ok(ticketService.saveDetailUi(id, body));

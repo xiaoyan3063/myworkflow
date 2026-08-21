@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { useUserStore } from '@/stores/user'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -29,6 +30,7 @@ const router = createRouter({
         { path: 'users', name: 'users', component: () => import('@/views/system/UserView.vue'), meta: { title: '用户管理' } },
         { path: 'depts', name: 'depts', component: () => import('@/views/system/DeptView.vue'), meta: { title: '部门管理' } },
         { path: 'roles', name: 'roles', component: () => import('@/views/system/RoleView.vue'), meta: { title: '角色管理' } },
+        { path: 'menus', name: 'menus', component: () => import('@/views/system/MenuView.vue'), meta: { title: '菜单管理' } },
         { path: 'ticket-types', name: 'ticketTypes', component: () => import('@/views/ticket/TicketTypeView.vue'), meta: { title: '工单类型' } },
         { path: 'ticket-types/:id/form', name: 'ticketFormDesign', component: () => import('@/views/ticket/TicketFormDesignerView.vue'), meta: { title: '表单设计' } },
         { path: 'ticket-types/:id/list', name: 'ticketListDesign', component: () => import('@/views/ticket/TicketListDesignerView.vue'), meta: { title: '列表配置' } },
@@ -42,15 +44,35 @@ const router = createRouter({
   ],
 })
 
-router.beforeEach((to, _from, next) => {
+router.beforeEach(async (to, _from, next) => {
   const token = localStorage.getItem('mw_token')
   if (!to.meta.public && !token) {
     next('/login')
-  } else if (to.path === '/login' && token) {
-    next('/')
-  } else {
-    next()
+    return
   }
+  if (to.path === '/login' && token) {
+    next('/')
+    return
+  }
+  if (to.meta.public) {
+    next()
+    return
+  }
+  const store = useUserStore()
+  if (token && !store.profile?.menus) {
+    try {
+      await store.fetchMe()
+    } catch {
+      store.logout()
+      next('/login')
+      return
+    }
+  }
+  if (store.profile && !store.canAccess(to.path)) {
+    next('/dashboard')
+    return
+  }
+  next()
 })
 
 export default router

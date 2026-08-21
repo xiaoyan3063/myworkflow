@@ -7,8 +7,10 @@ import com.myworkflow.common.result.R;
 import com.myworkflow.module.auth.dto.LoginRequest;
 import com.myworkflow.module.auth.dto.LoginResponse;
 import com.myworkflow.module.system.entity.SysUser;
+import com.myworkflow.module.system.entity.SysMenu;
 import com.myworkflow.module.system.mapper.SysUserMapper;
 import com.myworkflow.security.JwtTokenProvider;
+import com.myworkflow.security.PermissionService;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import lombok.RequiredArgsConstructor;
@@ -29,6 +31,7 @@ public class AuthController {
     private final SysUserMapper userMapper;
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider jwtTokenProvider;
+    private final PermissionService permissionService;
 
     @ApiOperation("登录")
     @PostMapping("/login")
@@ -46,6 +49,7 @@ public class AuthController {
         boolean admin = user.getAdminFlag() != null && user.getAdminFlag() == 1;
         String token = jwtTokenProvider.createToken(user.getId(), user.getUsername(), user.getTenantId(), admin);
         List<String> roles = userMapper.selectRoleCodesByUserId(user.getId());
+        List<SysMenu> allMenus = permissionService.menusForUser(user.getId(), admin);
         return R.ok(LoginResponse.builder()
                 .token(token)
                 .userId(user.getId())
@@ -55,6 +59,8 @@ public class AuthController {
                 .deptId(user.getDeptId())
                 .admin(admin)
                 .roles(roles)
+                .perms(permissionService.permsOf(allMenus))
+                .menus(permissionService.sidebarTree(user.getId(), admin))
                 .build());
     }
 
@@ -75,8 +81,13 @@ public class AuthController {
         map.put("email", user.getEmail());
         map.put("mobile", user.getMobile());
         map.put("avatar", user.getAvatar());
-        map.put("admin", user.getAdminFlag() != null && user.getAdminFlag() == 1);
+        boolean admin = user.getAdminFlag() != null && user.getAdminFlag() == 1;
+        List<SysMenu> allMenus = permissionService.menusForUser(user.getId(), admin);
+        map.put("admin", admin);
         map.put("roles", userMapper.selectRoleCodesByUserId(user.getId()));
+        map.put("perms", permissionService.permsOf(allMenus));
+        map.put("menus", permissionService.sidebarTree(user.getId(), admin));
+        map.put("dataScope", admin ? "ALL" : (UserContext.get() == null ? "SELF" : UserContext.get().getDataScope()));
         return R.ok(map);
     }
 }

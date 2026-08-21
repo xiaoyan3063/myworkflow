@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS sys_role (
     role_name       VARCHAR(128) NOT NULL,
     sort_no         INT DEFAULT 0,
     status          INT DEFAULT 1,
+    data_scope      VARCHAR(32) DEFAULT 'ALL', -- ALL / DEPT / SELF
     remark          VARCHAR(512),
     create_time     TIMESTAMP,
     update_time     TIMESTAMP,
@@ -69,11 +70,40 @@ CREATE TABLE IF NOT EXISTS sys_role (
     deleted         INT DEFAULT 0
 );
 
+ALTER TABLE sys_role ADD COLUMN IF NOT EXISTS data_scope VARCHAR(32) DEFAULT 'ALL';
+
 CREATE TABLE IF NOT EXISTS sys_user_role (
     id              BIGINT PRIMARY KEY,
     user_id         BIGINT NOT NULL,
     role_id         BIGINT NOT NULL,
     tenant_id       BIGINT DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS sys_menu (
+    id              BIGINT PRIMARY KEY,
+    tenant_id       BIGINT DEFAULT 0,
+    parent_id       BIGINT DEFAULT 0,
+    menu_type       VARCHAR(16) NOT NULL,
+    menu_name       VARCHAR(128) NOT NULL,
+    path            VARCHAR(256),
+    icon            VARCHAR(64),
+    perm            VARCHAR(128),
+    visible         INT DEFAULT 1,
+    sort_no         INT DEFAULT 0,
+    status          INT DEFAULT 1,
+    remark          VARCHAR(512),
+    create_time     TIMESTAMP,
+    update_time     TIMESTAMP,
+    create_by       BIGINT,
+    update_by       BIGINT,
+    deleted         INT DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS sys_role_menu (
+    id              BIGINT PRIMARY KEY,
+    tenant_id       BIGINT DEFAULT 0,
+    role_id         BIGINT NOT NULL,
+    menu_id         BIGINT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS wf_process_category (

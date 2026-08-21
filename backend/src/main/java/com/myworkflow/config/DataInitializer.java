@@ -11,6 +11,7 @@ import com.myworkflow.module.process.mapper.WfProcessDefMapper;
 import com.myworkflow.module.process.service.ProcessDefService;
 import com.myworkflow.module.system.entity.*;
 import com.myworkflow.module.system.mapper.*;
+import com.myworkflow.module.system.service.MenuService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.CommandLineRunner;
@@ -40,6 +41,7 @@ public class DataInitializer implements CommandLineRunner {
     private final WfProcessDefMapper processDefMapper;
     private final ProcessDefService processDefService;
     private final OpenAppMapper openAppMapper;
+    private final MenuService menuService;
 
     @Override
     public void run(String... args) {
@@ -48,9 +50,17 @@ public class DataInitializer implements CommandLineRunner {
         populator.setContinueOnError(true);
         populator.execute(dataSource);
 
-        if (tenantMapper.selectCount(null) > 0) {
-            return;
+        if (tenantMapper.selectCount(null) == 0) {
+            seedDemo();
         }
+        try {
+            menuService.ensureBaseMenus();
+        } catch (Exception e) {
+            log.warn("初始化菜单失败: {}", e.getMessage());
+        }
+    }
+
+    private void seedDemo() {
         log.info("初始化演示数据...");
 
         SysTenant tenant = new SysTenant();
@@ -101,6 +111,7 @@ public class DataInitializer implements CommandLineRunner {
         managerRole.setRoleName("部门经理");
         managerRole.setSortNo(2);
         managerRole.setStatus(1);
+        managerRole.setDataScope("DEPT");
         managerRole.setDeleted(0);
         roleMapper.insert(managerRole);
 
