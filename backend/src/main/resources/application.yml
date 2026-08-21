@@ -7,7 +7,7 @@ spring:
   application:
     name: myworkflow
   profiles:
-    active: h2
+    active: postgres
   jackson:
     date-format: yyyy-MM-dd HH:mm:ss
     time-zone: Asia/Shanghai
@@ -75,12 +75,15 @@ spring:
       path: /h2-console
 
 ---
+# 切换：spring.profiles.active=postgres
+# 或启动参数 -Dspring-boot.run.profiles=postgres
+# 先在 PG 里执行：CREATE DATABASE myworkflow;
 spring:
   config:
     activate:
       on-profile: postgres
   datasource:
     driver-class-name: org.postgresql.Driver
-    url: jdbc:postgresql://localhost:5432/myworkflow
-    username: postgres
-    password: your_password
+    url: jdbc:postgresql://192.168.1.122:5432/myworkflow
+    username: lcms
+    password: "3edc#EDC"

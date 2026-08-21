@@ -1,5 +1,9 @@
 -- 业务表结构（Flowable 表由引擎自动创建）
--- H2 / PostgreSQL 兼容写法
+-- 同时兼容 H2 与 PostgreSQL：
+--   * 不用 CLOB（H2 专有，PG 请用 TEXT）
+--   * 不用 AUTO_INCREMENT / IDENTITY（主键由 MyBatis-Plus 雪花 ID 写入）
+--   * 未加引号的标识符在 PG 中会折成小写，故列名一律小写蛇形
+-- 启动时由 DataInitializer 执行；已存在的表会因 IF NOT EXISTS 跳过，不会做迁移
 
 CREATE TABLE IF NOT EXISTS sys_tenant (
     id              BIGINT PRIMARY KEY,
@@ -96,7 +100,7 @@ CREATE TABLE IF NOT EXISTS wf_process_def (
     description     VARCHAR(1024),
     version         INT DEFAULT 1,
     status          INT DEFAULT 0,
-    bpmn_xml        CLOB,
+    bpmn_xml        TEXT,
     flowable_deploy_id VARCHAR(64),
     flowable_def_id    VARCHAR(64),
     create_time     TIMESTAMP,
@@ -111,7 +115,7 @@ CREATE TABLE IF NOT EXISTS wf_form_def (
     tenant_id       BIGINT DEFAULT 0,
     form_key        VARCHAR(128) NOT NULL,
     form_name       VARCHAR(256) NOT NULL,
-    form_schema     CLOB,
+    form_schema     TEXT,
     status          INT DEFAULT 1,
     remark          VARCHAR(512),
     create_time     TIMESTAMP,
@@ -133,7 +137,7 @@ CREATE TABLE IF NOT EXISTS wf_process_instance_ext (
     starter_id      BIGINT,
     starter_name    VARCHAR(64),
     status          VARCHAR(32),
-    form_data       CLOB,
+    form_data       TEXT,
     start_time      TIMESTAMP,
     end_time        TIMESTAMP,
     create_time     TIMESTAMP,
