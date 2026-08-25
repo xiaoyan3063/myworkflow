@@ -90,40 +90,67 @@ public class TicketTypeController {
 
     @ApiOperation("表单设计 schema")
     @GetMapping("/{id}/form-ui")
-    public R<TkFormUi> formUi(@PathVariable Long id) {
-        return R.ok(ticketService.getFormUi(id));
+    public R<TkFormUi> formUi(@PathVariable Long id,
+                              @RequestParam(defaultValue = "false") boolean published,
+                              @RequestParam(required = false) Integer version) {
+        return R.ok(ticketService.getFormUi(id, published, version));
     }
 
-    @ApiOperation("保存表单设计")
+    @ApiOperation("保存表单设计（草稿）")
     @RequiresPerm("ticket:type:save")
     @PutMapping("/{id}/form-ui")
     public R<TkFormUi> saveFormUi(@PathVariable Long id, @RequestBody Map<String, Object> body) {
         return R.ok(ticketService.saveFormUi(id, body));
     }
 
-    @ApiOperation("列表配置 schema")
-    @GetMapping("/{id}/list-ui")
-    public R<TkListUi> listUi(@PathVariable Long id) {
-        return R.ok(ticketService.getListUi(id));
+    @ApiOperation("发布表单设计")
+    @RequiresPerm("ticket:type:save")
+    @PostMapping("/{id}/form-ui/publish")
+    public R<TkFormUi> publishFormUi(@PathVariable Long id) {
+        return R.ok(ticketService.publishFormUi(id));
     }
 
-    @ApiOperation("保存列表配置")
+    @ApiOperation("列表配置 schema")
+    @GetMapping("/{id}/list-ui")
+    public R<TkListUi> listUi(@PathVariable Long id,
+                              @RequestParam(defaultValue = "false") boolean published,
+                              @RequestParam(required = false) Integer version) {
+        return R.ok(ticketService.getListUi(id, published, version));
+    }
+
+    @ApiOperation("保存列表配置（草稿）")
     @RequiresPerm("ticket:type:save")
     @PutMapping("/{id}/list-ui")
     public R<TkListUi> saveListUi(@PathVariable Long id, @RequestBody Map<String, Object> body) {
         return R.ok(ticketService.saveListUi(id, body));
     }
 
-    @ApiOperation("详情配置 schema")
-    @GetMapping("/{id}/detail-ui")
-    public R<TkDetailUi> detailUi(@PathVariable Long id) {
-        return R.ok(ticketService.getDetailUi(id));
+    @ApiOperation("发布列表配置")
+    @RequiresPerm("ticket:type:save")
+    @PostMapping("/{id}/list-ui/publish")
+    public R<TkListUi> publishListUi(@PathVariable Long id) {
+        return R.ok(ticketService.publishListUi(id));
     }
 
-    @ApiOperation("保存详情配置")
+    @ApiOperation("详情配置 schema")
+    @GetMapping("/{id}/detail-ui")
+    public R<TkDetailUi> detailUi(@PathVariable Long id,
+                                  @RequestParam(defaultValue = "false") boolean published,
+                                  @RequestParam(required = false) Integer version) {
+        return R.ok(ticketService.getDetailUi(id, published, version));
+    }
+
+    @ApiOperation("保存详情配置（草稿）")
     @RequiresPerm("ticket:type:save")
     @PutMapping("/{id}/detail-ui")
     public R<TkDetailUi> saveDetailUi(@PathVariable Long id, @RequestBody Map<String, Object> body) {
         return R.ok(ticketService.saveDetailUi(id, body));
+    }
+
+    @ApiOperation("发布详情配置")
+    @RequiresPerm("ticket:type:save")
+    @PostMapping("/{id}/detail-ui/publish")
+    public R<TkDetailUi> publishDetailUi(@PathVariable Long id) {
+        return R.ok(ticketService.publishDetailUi(id));
     }
 }

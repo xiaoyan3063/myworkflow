@@ -48,6 +48,7 @@ myworkflow:
   notify:
     mail-enabled: false
     in-app-enabled: true
+  upload-dir: ./data/ticket-files
 
 logging:
   level:

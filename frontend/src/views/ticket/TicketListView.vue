@@ -91,7 +91,7 @@ function canSubmit(row: any) {
 }
 
 async function loadSchema(id: string) {
-  const res: any = await http.get(`/ticket/types/${id}/form-ui`)
+  const res: any = await http.get(`/ticket/types/${id}/form-ui`, { params: { published: true } })
   formSchema.value = res.data?.schema || { fields: [], raw: [] }
 }
 

@@ -34,9 +34,15 @@ const formOption = computed(() => ({
   form: { ...(silentFormOption.form || {}), disabled: !!props.disabled },
 }))
 
+/** 父子各有一个深度 watch，值相同还回抛会把两边打成死循环 */
+function same(a: any, b: any) {
+  return JSON.stringify(a || {}) === JSON.stringify(b || {})
+}
+
 watch(
   () => props.modelValue,
   (v) => {
+    if (same(v, inner.value)) return
     inner.value = { ...(v || {}) }
   },
   { deep: true },
@@ -45,6 +51,7 @@ watch(
 watch(
   inner,
   (v) => {
+    if (same(v, props.modelValue)) return
     emit('update:modelValue', { ...v })
   },
   { deep: true },

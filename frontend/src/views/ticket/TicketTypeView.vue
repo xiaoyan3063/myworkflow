@@ -13,6 +13,9 @@
       <el-table-column prop="processKey" label="绑定流程" width="160">
         <template #default="{ row }">{{ row.processKey || '—' }}</template>
       </el-table-column>
+      <el-table-column label="编号规则" min-width="180">
+        <template #default="{ row }">{{ noRuleText(row) }}</template>
+      </el-table-column>
       <el-table-column label="状态" width="90">
         <template #default="{ row }">{{ row.status === 1 ? '启用' : '停用' }}</template>
       </el-table-column>
@@ -32,14 +35,30 @@
       <el-pagination background layout="total, prev, pager, next" :total="total" v-model:current-page="page" @current-change="load" />
     </div>
 
-    <el-dialog v-model="typeVisible" :title="typeForm.id ? '编辑类型' : '新建类型'" width="480px">
+    <el-dialog v-model="typeVisible" :title="typeForm.id ? '编辑类型' : '新建类型'" width="520px">
       <el-form label-width="100px">
         <el-form-item label="名称"><el-input v-model="typeForm.typeName" /></el-form-item>
         <el-form-item label="编码">
           <el-input v-model="typeForm.typeCode" :disabled="!!typeForm.id" placeholder="如 LEAVE，用于工单号前缀" />
         </el-form-item>
         <el-form-item label="绑定流程">
-          <el-input v-model="typeForm.processKey" placeholder="已发布流程 processKey，本步不发起" />
+          <el-select v-model="typeForm.processKey" filterable clearable placeholder="必须选已发布流程" style="width: 100%">
+            <el-option v-for="p in published" :key="p.processKey" :label="`${p.processName} (${p.processKey})`" :value="p.processKey" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="编号前缀">
+          <el-input v-model="typeForm.noPrefix" placeholder="空则用类型编码" />
+        </el-form-item>
+        <el-form-item label="日期格式">
+          <el-select v-model="typeForm.noDatePattern" style="width: 100%">
+            <el-option label="yyyyMMdd" value="yyyyMMdd" />
+            <el-option label="yyyyMM" value="yyyyMM" />
+            <el-option label="yyMMdd" value="yyMMdd" />
+            <el-option label="yyyy-MM-dd" value="yyyy-MM-dd" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="流水位数">
+          <el-input-number v-model="typeForm.noSeqLen" :min="1" :max="8" />
         </el-form-item>
         <el-form-item label="备注"><el-input v-model="typeForm.remark" type="textarea" /></el-form-item>
       </el-form>
@@ -65,6 +84,14 @@ const page = ref(1)
 const loading = ref(false)
 const typeVisible = ref(false)
 const typeForm = reactive<any>({})
+const published = ref<any[]>([])
+
+function noRuleText(row: any) {
+  const prefix = row.noPrefix || row.typeCode || ''
+  const date = row.noDatePattern || 'yyyyMMdd'
+  const seq = row.noSeqLen || 4
+  return `${prefix}-${date}-${'0'.repeat(Math.max(0, seq - 1))}1`
+}
 
 async function load() {
   loading.value = true
@@ -77,7 +104,9 @@ async function load() {
 
 function openType(row?: any) {
   Object.keys(typeForm).forEach(k => delete typeForm[k])
-  Object.assign(typeForm, row ? { ...row } : { status: 1 })
+  Object.assign(typeForm, row ? { ...row } : { status: 1, noDatePattern: 'yyyyMMdd', noSeqLen: 4 })
+  if (!typeForm.noDatePattern) typeForm.noDatePattern = 'yyyyMMdd'
+  if (!typeForm.noSeqLen) typeForm.noSeqLen = 4
   typeVisible.value = true
 }
 
@@ -98,7 +127,15 @@ async function removeType(row: any) {
   userStore.fetchMe().catch(() => undefined)
 }
 
-onMounted(load)
+onMounted(async () => {
+  load()
+  try {
+    const res: any = await http.get('/process/defs/published')
+    published.value = res.data || []
+  } catch {
+    published.value = []
+  }
+})
 </script>
 <style scoped>
 .head { display: flex; justify-content: space-between; align-items: flex-start; }

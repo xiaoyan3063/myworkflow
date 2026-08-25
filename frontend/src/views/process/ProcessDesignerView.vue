@@ -4,8 +4,24 @@
       <div class="left">
         <el-input v-model="meta.processName" placeholder="流程名称" style="width: 170px" />
         <el-input v-model="meta.processKey" placeholder="流程标识(英文)" style="width: 170px" :disabled="!!meta.id" />
-        <el-select v-model="meta.formId" clearable placeholder="绑定表单" style="width: 160px" @change="loadFormFields">
-          <el-option v-for="f in forms" :key="f.id" :label="f.formName" :value="f.id" />
+        <el-select
+          v-model="bindSource"
+          clearable
+          filterable
+          placeholder="绑定表单 / 工单类型"
+          style="width: 240px"
+        >
+          <el-option-group label="审批表单">
+            <el-option v-for="f in forms" :key="'f-' + f.id" :label="f.formName" :value="'f:' + f.id" />
+          </el-option-group>
+          <el-option-group label="工单类型">
+            <el-option
+              v-for="t in ticketTypes"
+              :key="'t-' + t.id"
+              :label="`${t.typeName}（${t.typeCode}）`"
+              :value="'t:' + t.id"
+            />
+          </el-option-group>
         </el-select>
       </div>
       <div class="right">
@@ -121,7 +137,7 @@
               <el-select
                 v-model="nodeForm.assigneeValue"
                 style="width: 100%"
-                placeholder="选择绑定表单中的人员字段"
+                placeholder="选择绑定表单或工单类型中的人员字段"
                 @change="applyTask"
               >
                 <el-option
@@ -226,8 +242,8 @@
                   @change="applyBranch(b)"
                 />
 
-                <div v-if="!meta.formId && b.mode === 'simple'" class="tip warn-text">
-                  请先在顶部绑定表单，才能选择字段。
+                <div v-if="!hasBindSource && b.mode === 'simple'" class="tip warn-text">
+                  请先在顶部绑定审批表单或工单类型，才能选择字段。
                 </div>
                 <div v-else-if="b.expression" class="expr-preview">{{ b.expression }}</div>
               </template>
@@ -295,7 +311,7 @@
               然后<b>点中网关本身</b>，右侧会列出所有分支，逐条设置条件即可，不用去点细细的连线。
             </p>
             <ol>
-              <li>在顶部「绑定表单」选好表单，条件才能直接选字段。</li>
+              <li>在顶部「绑定表单 / 工单类型」选好数据源，条件才能直接选字段。工单类型会出现在第二组。</li>
               <li>每条分支选「字段 + 运算符 + 值」，例如 请假天数 大于 3。</li>
               <li>留一条勾选「默认分支」兜底，避免所有条件都不满足时流程卡住。</li>
               <li>分支按列表顺序判断，命中第一条满足的就不再看后面的。</li>
@@ -497,6 +513,7 @@ const canvasRef = ref<HTMLElement>()
 const saving = ref(false)
 const helpVisible = ref(false)
 const forms = ref<any[]>([])
+const ticketTypes = ref<any[]>([])
 const users = ref<any[]>([])
 const roles = ref<any[]>([])
 const deptTree = ref<any[]>([])
@@ -510,7 +527,7 @@ const formFields = ref<any[]>([])
 const selected = shallowRef<any>(null)
 const selectionCount = ref(0)
 const branches = ref<any[]>([])
-const meta = reactive<any>({ id: null, processName: '', processKey: '', formId: null, description: '' })
+const meta = reactive<any>({ id: null, processName: '', processKey: '', formId: null, ticketTypeId: null, description: '' })
 const nodeForm = reactive({
   name: '',
   assigneeType: 'role',
@@ -522,6 +539,29 @@ const nodeForm = reactive({
 
 let modeler: any = null
 let decorateHandle = 0
+
+const hasBindSource = computed(() => !!(meta.formId || meta.ticketTypeId))
+
+const bindSource = computed({
+  get: () => {
+    if (meta.ticketTypeId) return 't:' + meta.ticketTypeId
+    if (meta.formId) return 'f:' + meta.formId
+    return ''
+  },
+  set: (v: string) => {
+    if (!v) {
+      meta.formId = null
+      meta.ticketTypeId = null
+    } else if (v.startsWith('t:')) {
+      meta.ticketTypeId = v.slice(2)
+      meta.formId = null
+    } else {
+      meta.formId = v.slice(2)
+      meta.ticketTypeId = null
+    }
+    loadFormFields()
+  },
+})
 
 const isUserTask = computed(() => selected.value?.type === 'bpmn:UserTask')
 const isGateway = computed(() => /Gateway$/.test(selected.value?.type || ''))
@@ -620,13 +660,15 @@ function toTree(nodes: any[]): any[] {
 }
 
 onMounted(async () => {
-  const [formRes, userRes, roleRes, deptRes]: any[] = await Promise.all([
+  const [formRes, typeRes, userRes, roleRes, deptRes]: any[] = await Promise.all([
     http.get('/process/forms', { params: { page: 1, size: 100 } }),
+    http.get('/ticket/types/enabled').catch(() => ({ data: [] })),
     http.get('/system/users/simple'),
     http.get('/system/roles'),
     http.get('/system/depts/tree'),
   ])
   forms.value = formRes.data?.records || []
+  ticketTypes.value = typeRes.data || []
   users.value = userRes.data || []
   roles.value = roleRes.data || []
   deptTree.value = toTree(deptRes.data || [])
@@ -672,7 +714,8 @@ onMounted(async () => {
       id: res.data.id,
       processName: res.data.processName,
       processKey: res.data.processKey,
-      formId: res.data.formId,
+      formId: res.data.formId || null,
+      ticketTypeId: res.data.ticketTypeId || null,
       description: res.data.description,
     })
     await loadFormFields()
@@ -711,16 +754,49 @@ async function importDiagram(xml?: string) {
 }
 
 async function loadFormFields() {
-  if (!meta.formId) {
-    formFields.value = []
+  formFields.value = []
+  if (meta.ticketTypeId) {
+    try {
+      const res: any = await http.get(`/ticket/types/${meta.ticketTypeId}/fields`)
+      formFields.value = (res.data || []).map((f: any) => {
+        let options: any[] = []
+        if (f.optionsJson) {
+          try {
+            options = JSON.parse(f.optionsJson)
+          } catch {
+            options = []
+          }
+        }
+        return {
+          field: f.fieldKey,
+          title: f.title,
+          type: mapTicketFieldType(f.fieldType),
+          options,
+        }
+      })
+    } catch {
+      formFields.value = []
+    }
     return
   }
+  if (!meta.formId) return
   const res: any = await http.get(`/process/forms/${meta.formId}`)
   try {
-    formFields.value = JSON.parse(res.data?.formSchema || '[]')
+    const raw = JSON.parse(res.data?.formSchema || '[]')
+    formFields.value = (Array.isArray(raw) ? raw : []).map((f: any) => ({
+      ...f,
+      type: mapTicketFieldType(f.type),
+    }))
   } catch {
     formFields.value = []
   }
+}
+
+function mapTicketFieldType(type?: string) {
+  const t = String(type || '').replace(/-/g, '').toLowerCase()
+  if (t === 'ticketuserselect' || t === 'user') return 'user'
+  if (t === 'ticketusersselect' || t === 'users') return 'users'
+  return type || 'input'
 }
 
 /* ---------- 选中 -> 表单（只在切换选中元素时读模型，编辑过程中表单是唯一权威） ---------- */
@@ -969,8 +1045,8 @@ function validate(): string[] {
         problems.push(`审批节点「${el.businessObject.name || el.id}」还没有配置审批人`)
       }
       if (cfg.assigneeType === 'formField') {
-        if (!meta.formId) {
-          problems.push(`审批节点「${el.businessObject.name || el.id}」按表单字段取审批人，但流程还没有绑定表单`)
+        if (!hasBindSource.value) {
+          problems.push(`审批节点「${el.businessObject.name || el.id}」按表单字段取审批人，但流程还没有绑定表单或工单类型`)
         } else if (!formFields.value.some((f) => f.field === cfg.assigneeValue)) {
           problems.push(`审批节点「${el.businessObject.name || el.id}」引用的人员字段「${cfg.assigneeValue}」已不存在`)
         }
@@ -1047,7 +1123,8 @@ async function persist(deploy = false) {
       id: meta.id,
       processName: meta.processName,
       processKey: meta.processKey,
-      formId: meta.formId,
+      formId: meta.formId || 0,
+      ticketTypeId: meta.ticketTypeId || 0,
       description: meta.description,
       bpmnXml: xml,
     })

@@ -3,7 +3,7 @@
     <div class="head">
       <div>
         <h1 class="page-title">{{ type.typeName || '工单列表' }}</h1>
-        <p class="page-sub">{{ type.typeCode }} · 列和筛选来自列表配置</p>
+        <p class="page-sub">{{ type.typeCode }} · 列和筛选来自已发布的列表配置</p>
       </div>
       <el-button v-if="hasPerm('ticket:create')" type="primary" @click="openEdit()">新建草稿</el-button>
     </div>
@@ -43,6 +43,7 @@
           <el-tag v-if="col.field === 'status'" size="small" :type="ticketStatusTone(row.status)">
             {{ ticketStatusText(row.status) }}
           </el-tag>
+          <TicketFileLinks v-else-if="isFileCell(row, col)" :value="row.formData?.[col.field]" />
           <span v-else>{{ cellValue(row, col) }}</span>
         </template>
       </el-table-column>
@@ -80,6 +81,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import http from '@/utils/http'
 import TicketForm from '@/components/ticket/TicketForm.vue'
+import TicketFileLinks from '@/components/ticket/TicketFileLinks.vue'
+import { looksLikeFileIds, normalizeFileIds } from '@/components/ticket/ticketFiles'
 import { TICKET_STATUS, ticketStatusText, ticketStatusTone } from '@/utils/status'
 import { hasPerm } from '@/utils/permission'
 
@@ -110,6 +113,17 @@ function mainProp(field: string) {
   if (field === 'ticket_no') return 'ticketNo'
   if (field === 'createTime' || field === 'create_time') return 'createTime'
   return field
+}
+
+const fileFields = computed(
+  () => new Set((formSchema.value?.fields || []).filter((f: any) => f.type === 'file').map((f: any) => f.field)),
+)
+
+/** 字段改过名、旧数据对不上已发布 schema 时，按值的形状兜底认成附件 */
+function isFileCell(row: any, col: any) {
+  if (col.from !== 'json') return false
+  const v = row.formData?.[col.field]
+  return fileFields.value.has(col.field) ? normalizeFileIds(v).length > 0 : looksLikeFileIds(v)
 }
 
 function cellValue(row: any, col: any) {
@@ -145,11 +159,11 @@ function reset() {
 async function loadSchema() {
   const t: any = await http.get(`/ticket/types/code/${typeCode.value}`)
   type.value = t.data || {}
-  const ui: any = await http.get(`/ticket/types/${type.value.id}/list-ui`)
+  const ui: any = await http.get(`/ticket/types/${type.value.id}/list-ui`, { params: { published: true } })
   const schema = ui.data?.schema || {}
   columns.value = schema.columns || []
   filters.value = schema.filters || []
-  const formUi: any = await http.get(`/ticket/types/${type.value.id}/form-ui`)
+  const formUi: any = await http.get(`/ticket/types/${type.value.id}/form-ui`, { params: { published: true } })
   formSchema.value = formUi.data?.schema || { fields: [], raw: [] }
 }
 

@@ -197,12 +197,16 @@ onMounted(async () => {
     const jobs: Promise<any>[] = []
     if (ticket.value.typeId) {
       jobs.push(
-        http.get(`/ticket/types/${ticket.value.typeId}/form-ui`).then((ui: any) => {
+        http.get(`/ticket/types/${ticket.value.typeId}/form-ui`, {
+          params: { published: true, version: ticket.value.schemaVersion },
+        }).then((ui: any) => {
           formSchema.value = ui.data?.schema || { fields: [], raw: [] }
         }),
       )
       jobs.push(
-        http.get(`/ticket/types/${ticket.value.typeId}/detail-ui`).then((ui: any) => {
+        http.get(`/ticket/types/${ticket.value.typeId}/detail-ui`, {
+          params: { published: true, version: ticket.value.schemaVersion },
+        }).then((ui: any) => {
           detailSchema.value = ui.data?.schema || detailSchema.value
         }),
       )

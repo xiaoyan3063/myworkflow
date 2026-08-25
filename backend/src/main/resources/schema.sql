@@ -126,6 +126,7 @@ CREATE TABLE IF NOT EXISTS wf_process_def (
     process_name    VARCHAR(256) NOT NULL,
     category_id     BIGINT,
     form_id         BIGINT,
+    ticket_type_id  BIGINT,
     icon            VARCHAR(128),
     description     VARCHAR(1024),
     version         INT DEFAULT 1,
@@ -139,6 +140,8 @@ CREATE TABLE IF NOT EXISTS wf_process_def (
     update_by       BIGINT,
     deleted         INT DEFAULT 0
 );
+
+ALTER TABLE wf_process_def ADD COLUMN IF NOT EXISTS ticket_type_id BIGINT;
 
 CREATE TABLE IF NOT EXISTS wf_form_def (
     id              BIGINT PRIMARY KEY,
@@ -215,6 +218,9 @@ CREATE TABLE IF NOT EXISTS tk_type (
     type_code       VARCHAR(64) NOT NULL,
     type_name       VARCHAR(128) NOT NULL,
     process_key     VARCHAR(128),
+    no_prefix       VARCHAR(64),
+    no_date_pattern VARCHAR(32) DEFAULT 'yyyyMMdd',
+    no_seq_len      INT DEFAULT 4,
     status          INT DEFAULT 1,
     remark          VARCHAR(512),
     create_time     TIMESTAMP,
@@ -248,6 +254,7 @@ CREATE TABLE IF NOT EXISTS tk_form_ui (
     tenant_id       BIGINT DEFAULT 0,
     type_id         BIGINT NOT NULL,
     version         INT DEFAULT 1,
+    status          VARCHAR(16) DEFAULT 'DRAFT',
     schema          JSONB,
     create_time     TIMESTAMP,
     update_time     TIMESTAMP,
@@ -261,6 +268,7 @@ CREATE TABLE IF NOT EXISTS tk_list_ui (
     tenant_id       BIGINT DEFAULT 0,
     type_id         BIGINT NOT NULL,
     version         INT DEFAULT 1,
+    status          VARCHAR(16) DEFAULT 'DRAFT',
     schema          JSONB,
     create_time     TIMESTAMP,
     update_time     TIMESTAMP,
@@ -274,6 +282,7 @@ CREATE TABLE IF NOT EXISTS tk_detail_ui (
     tenant_id       BIGINT DEFAULT 0,
     type_id         BIGINT NOT NULL,
     version         INT DEFAULT 1,
+    status          VARCHAR(16) DEFAULT 'DRAFT',
     schema          JSONB,
     create_time     TIMESTAMP,
     update_time     TIMESTAMP,
@@ -292,6 +301,7 @@ CREATE TABLE IF NOT EXISTS tk_ticket (
     starter_id      BIGINT,
     starter_name    VARCHAR(64),
     process_inst_id VARCHAR(64),
+    schema_version  INT,
     form_data       JSONB,
     create_time     TIMESTAMP,
     update_time     TIMESTAMP,
@@ -299,6 +309,47 @@ CREATE TABLE IF NOT EXISTS tk_ticket (
     update_by       BIGINT,
     deleted         INT DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS tk_ticket_file (
+    id              BIGINT PRIMARY KEY,
+    tenant_id       BIGINT DEFAULT 0,
+    ticket_id       BIGINT,
+    file_name       VARCHAR(256) NOT NULL,
+    content_type    VARCHAR(128),
+    file_size       BIGINT,
+    storage_path    VARCHAR(512) NOT NULL,
+    create_time     TIMESTAMP,
+    update_time     TIMESTAMP,
+    create_by       BIGINT,
+    update_by       BIGINT,
+    deleted         INT DEFAULT 0
+);
+
+ALTER TABLE tk_type ADD COLUMN IF NOT EXISTS no_prefix VARCHAR(64);
+ALTER TABLE tk_type ADD COLUMN IF NOT EXISTS no_date_pattern VARCHAR(32) DEFAULT 'yyyyMMdd';
+ALTER TABLE tk_type ADD COLUMN IF NOT EXISTS no_seq_len INT DEFAULT 4;
+ALTER TABLE tk_form_ui ADD COLUMN IF NOT EXISTS status VARCHAR(16) DEFAULT 'PUBLISHED';
+ALTER TABLE tk_list_ui ADD COLUMN IF NOT EXISTS status VARCHAR(16) DEFAULT 'PUBLISHED';
+ALTER TABLE tk_detail_ui ADD COLUMN IF NOT EXISTS status VARCHAR(16) DEFAULT 'PUBLISHED';
+ALTER TABLE tk_ticket ADD COLUMN IF NOT EXISTS schema_version INT;
+UPDATE tk_form_ui SET status = 'PUBLISHED' WHERE status IS NULL OR status = '';
+UPDATE tk_list_ui SET status = 'PUBLISHED' WHERE status IS NULL OR status = '';
+UPDATE tk_detail_ui SET status = 'PUBLISHED' WHERE status IS NULL OR status = '';
+
+-- 工单量随使用时间增长，日常入口都是这几条路径：
+--   按类型分页、按类型+状态筛、按工单号精确查、按发起人做数据范围、按实例回写
+CREATE INDEX IF NOT EXISTS idx_tk_ticket_type_time ON tk_ticket (type_id, create_time DESC);
+CREATE INDEX IF NOT EXISTS idx_tk_ticket_type_status_time ON tk_ticket (type_id, status, create_time DESC);
+CREATE INDEX IF NOT EXISTS idx_tk_ticket_no ON tk_ticket (ticket_no);
+CREATE INDEX IF NOT EXISTS idx_tk_ticket_starter_time ON tk_ticket (starter_id, create_time DESC);
+CREATE INDEX IF NOT EXISTS idx_tk_ticket_proc_inst ON tk_ticket (process_inst_id);
+CREATE INDEX IF NOT EXISTS idx_tk_ticket_file_ticket ON tk_ticket_file (ticket_id);
+CREATE INDEX IF NOT EXISTS idx_tk_field_type ON tk_field (type_id);
+CREATE INDEX IF NOT EXISTS idx_tk_form_ui_type ON tk_form_ui (type_id, status, version DESC);
+CREATE INDEX IF NOT EXISTS idx_tk_list_ui_type ON tk_list_ui (type_id, status, version DESC);
+CREATE INDEX IF NOT EXISTS idx_tk_detail_ui_type ON tk_detail_ui (type_id, status, version DESC);
+CREATE INDEX IF NOT EXISTS idx_wf_inst_ext_business ON wf_process_instance_ext (business_key);
+CREATE INDEX IF NOT EXISTS idx_wf_inst_ext_inst ON wf_process_instance_ext (process_inst_id);
 
 CREATE TABLE IF NOT EXISTS open_app (
     id              BIGINT PRIMARY KEY,

@@ -55,6 +55,17 @@ public class ProcessDefService {
         if (!StringUtils.hasText(def.getProcessKey())) {
             throw new BizException("流程标识不能为空");
         }
+        if (def.getTicketTypeId() != null && def.getTicketTypeId() == 0L) {
+            def.setTicketTypeId(null);
+        }
+        if (def.getFormId() != null && def.getFormId() == 0L) {
+            def.setFormId(null);
+        }
+        if (def.getTicketTypeId() != null) {
+            def.setFormId(null);
+        } else if (def.getFormId() != null) {
+            def.setTicketTypeId(null);
+        }
         if (def.getId() == null) {
             Long cnt = processDefMapper.selectCount(new LambdaQueryWrapper<WfProcessDef>()
                     .eq(WfProcessDef::getProcessKey, def.getProcessKey()));
@@ -67,6 +78,7 @@ public class ProcessDefService {
             db.setProcessName(def.getProcessName());
             db.setCategoryId(def.getCategoryId());
             db.setFormId(def.getFormId());
+            db.setTicketTypeId(def.getTicketTypeId());
             db.setIcon(def.getIcon());
             db.setDescription(def.getDescription());
             if (StringUtils.hasText(def.getBpmnXml())) {

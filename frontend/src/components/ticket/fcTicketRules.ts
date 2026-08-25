@@ -24,6 +24,30 @@ export const ticketUserDragRule = {
   },
 }
 
+export const ticketFileDragRule = {
+  menu: 'main',
+  icon: 'icon-upload',
+  label: '附件',
+  name: 'TicketFileUpload',
+  mask: true,
+  input: true,
+  validate: ['array'],
+  event: ['change'],
+  rule() {
+    return {
+      type: 'TicketFileUpload',
+      field: uniqueId(),
+      title: '附件',
+      info: '',
+      $required: false,
+      props: {},
+    }
+  },
+  props() {
+    return [{ type: 'switch', title: '是否禁用', field: 'disabled' }]
+  },
+}
+
 export const ticketUsersDragRule = {
   menu: 'main',
   icon: 'icon-select',
@@ -96,7 +120,7 @@ function pickRules(rules: any[], allow: Set<string>): any[] {
 
 export function rulesFromSchema(schema: any, onlyFields?: string[]): any[] {
   if (Array.isArray(schema?.raw) && schema.raw.length) {
-    return filterRulesByFields(schema.raw, onlyFields)
+    return filterRulesByFields(rewriteFileControls(schema.raw), onlyFields)
   }
   const mapped = (schema?.fields || []).map((f: any) => {
     const type = toFcType(f.type)
@@ -118,6 +142,24 @@ export function rulesFromSchema(schema: any, onlyFields?: string[]): any[] {
   return filterRulesByFields(mapped, onlyFields)
 }
 
+function rewriteFileControls(rule: any): any {
+  if (Array.isArray(rule)) {
+    return rule.map(rewriteFileControls)
+  }
+  if (!rule || typeof rule !== 'object') {
+    return rule
+  }
+  const out: any = { ...rule }
+  const t = String(out.type || '').replace(/-/g, '').toLowerCase()
+  if (t === 'upload' || t === 'elupload' || t === 'file') {
+    out.type = 'TicketFileUpload'
+  }
+  if (Array.isArray(out.children)) {
+    out.children = out.children.map(rewriteFileControls)
+  }
+  return out
+}
+
 function toFcType(type: string) {
   if (type === 'textarea') return 'textarea'
   if (type === 'number') return 'inputNumber'
@@ -125,6 +167,7 @@ function toFcType(type: string) {
   if (type === 'date') return 'datePicker'
   if (type === 'user') return 'TicketUserSelect'
   if (type === 'users') return 'TicketUsersSelect'
+  if (type === 'file') return 'TicketFileUpload'
   return 'input'
 }
 

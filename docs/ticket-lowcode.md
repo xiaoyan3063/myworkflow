@@ -325,6 +325,24 @@ LIMIT 10 OFFSET 0;
 4. 侧栏只出现请假列表；列表里只能看到自己发起的单。别人的请假单详情会 403。
 5. 该用户在待办里审批别人的单不受影响（走 `/runtime/**`）。
 
+## 附件、编号、配置发布（第 7 步）
+
+- 附件表 `tk_ticket_file`。`POST /ticket/files` 上传，返回 `id`；表单 file 字段存 **id 数组**。下载 `GET /ticket/files/{id}`（带 JWT）。设计器左侧有「附件」控件，内置 upload 在运行时也会改成同一组件。
+- 工单号：类型上 `no_prefix` + `no_date_pattern` + `no_seq_len`，创建草稿时生成。提交审批时若没有 `ticket_no` 会拒绝（并补一次生成）。
+- `tk_form_ui` / `tk_list_ui` / `tk_detail_ui` 的 `status`：`DRAFT` 草稿 / `PUBLISHED` 已发布。设计器「保存草稿」只写 DRAFT；「发布」插入一条 PUBLISHED。运行时 `?published=true`。
+- 创建工单时把当时已发布表单的 `version` 写入 `tk_ticket.schema_version`。详情打开表单按这个版本，不受之后再发布影响。
+- 类型绑定的 `processKey` 必须在 `wf_process_def` 且 `status=1`（已发布）。保存类型、提交审批都会校验。审批待办逻辑未改。
+
+### 验证清单
+
+1. 重启后端，确认 `tk_ticket_file`、`schema_version`、三类 UI 的 `status`、类型编号字段已加上。已有表单配置会被标成 PUBLISHED。
+2. 工单类型：编号前缀/日期/流水保存后，新建草稿工单号为 `前缀-日期-流水`。把绑定流程改成未发布的 key，保存应失败。
+3. 设计表单拖入「附件」，保存草稿。此时运行时新建工单仍是上一版（或旧数据）。点发布后再新建，表单出现附件；上传后 `form_data` 里是数字 id 列表，库里 `tk_ticket_file` 有行。
+4. 再改表单并只保存草稿、不发布：新开的工单仍是已发布版。已在途工单详情字段与创建时版本一致。
+5. 列表/详情同样：草稿不进运行时，发布后列表列才变。
+6. 提交一张没有工单号的单（正常不会发生）应报「提交审批前必须已有工单号」。绑定流程停用后提交应报未发布。
+7. 待办通过/驳回工单状态回写与以前相同。
+
 ## PostgreSQL
 
 默认 profile 仍是 `h2`，避免没装库时起不来。切 PG 的改法见仓库根目录 `README.md`「切换 PostgreSQL」。  

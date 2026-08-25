@@ -102,6 +102,9 @@ final class FcDesignerSchemaParser {
             return "select";
         }
         if (t.contains("date") || t.contains("time")) return "date";
+        if ("upload".equals(t) || "elupload".equals(t) || "file".equals(t) || "ticketfileupload".equals(t)) {
+            return "file";
+        }
         if ("ticketuserselect".equals(t) || "userselect".equals(t) || "user".equals(t)) return "user";
         if ("ticketusersselect".equals(t) || "usersselect".equals(t) || "users".equals(t)) return "users";
         if ("input".equals(t) || "password".equals(t) || "elinput".equals(t)) return "input";

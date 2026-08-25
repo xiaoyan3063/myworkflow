@@ -3,12 +3,16 @@
     <div class="head">
       <div>
         <h1 class="page-title">详情配置</h1>
-        <p class="page-sub">{{ typeName }} · 区块 + 字段多选，保存到 tk_detail_ui。控件类型仍用表单设计。</p>
+        <p class="page-sub">{{ typeName }} · 区块 + 字段多选。保存为草稿，发布后运行时才用。</p>
       </div>
       <div>
+        <el-tag v-if="uiStatus" size="small" :type="uiStatus === 'PUBLISHED' ? 'success' : 'info'">
+          {{ uiStatus === 'PUBLISHED' ? '已发布' : '草稿' }} v{{ uiVersion || 1 }}
+        </el-tag>
         <el-button @click="$router.push(`/tickets/${typeCode}`)" :disabled="!typeCode">打开列表</el-button>
         <el-button @click="$router.push('/ticket-types')">返回</el-button>
-        <el-button type="primary" :loading="saving" @click="save">保存</el-button>
+        <el-button :loading="saving" @click="save">保存草稿</el-button>
+        <el-button type="primary" :loading="publishing" @click="publish">发布</el-button>
       </div>
     </div>
 
@@ -79,6 +83,9 @@ const typeId = route.params.id as string
 const typeName = ref('')
 const typeCode = ref('')
 const saving = ref(false)
+const publishing = ref(false)
+const uiStatus = ref('')
+const uiVersion = ref(1)
 const showTimeline = ref(true)
 const actions = ref<string[]>(['save', 'submit'])
 const sections = ref<{ title: string; fields: string[] }[]>([])
@@ -107,6 +114,8 @@ onMounted(async () => {
   ])
   formFields.value = (fieldsRes.data || []).map((f: any) => ({ field: f.fieldKey, title: f.title }))
   const schema = uiRes.data?.schema || {}
+  uiStatus.value = uiRes.data?.status || 'DRAFT'
+  uiVersion.value = uiRes.data?.version || 1
   showTimeline.value = schema.showTimeline !== false
   actions.value = Array.isArray(schema.actions) ? [...schema.actions] : ['save', 'submit']
   if (Array.isArray(schema.sections) && schema.sections.length) {
@@ -137,9 +146,25 @@ async function save() {
   saving.value = true
   try {
     await http.put(`/ticket/types/${typeId}/detail-ui`, payload)
-    ElMessage.success('已保存详情配置')
+    ElMessage.success('已保存草稿')
+    const ui: any = await http.get(`/ticket/types/${typeId}/detail-ui`)
+    uiStatus.value = ui.data?.status || 'DRAFT'
+    uiVersion.value = ui.data?.version || 1
   } finally {
     saving.value = false
+  }
+}
+
+async function publish() {
+  publishing.value = true
+  try {
+    await save()
+    const ui: any = await http.post(`/ticket/types/${typeId}/detail-ui/publish`)
+    uiStatus.value = ui.data?.status || 'PUBLISHED'
+    uiVersion.value = ui.data?.version || uiVersion.value
+    ElMessage.success('已发布详情配置')
+  } finally {
+    publishing.value = false
   }
 }
 </script>

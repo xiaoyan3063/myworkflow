@@ -3,12 +3,16 @@
     <div class="head">
       <div>
         <h1 class="page-title">列表配置</h1>
-        <p class="page-sub">{{ typeName }} · 勾选列和筛选，保存到 tk_list_ui</p>
+        <p class="page-sub">{{ typeName }} · 勾选列和筛选，保存为草稿后发布才用于运行时列表</p>
       </div>
       <div>
+        <el-tag v-if="uiStatus" size="small" :type="uiStatus === 'PUBLISHED' ? 'success' : 'info'">
+          {{ uiStatus === 'PUBLISHED' ? '已发布' : '草稿' }} v{{ uiVersion || 1 }}
+        </el-tag>
         <el-button @click="$router.push(`/tickets/${typeCode}`)" :disabled="!typeCode">打开列表</el-button>
         <el-button @click="$router.push('/ticket-types')">返回</el-button>
-        <el-button type="primary" :loading="saving" @click="save">保存</el-button>
+        <el-button :loading="saving" @click="save">保存草稿</el-button>
+        <el-button type="primary" :loading="publishing" @click="publish">发布</el-button>
       </div>
     </div>
 
@@ -96,6 +100,9 @@ const typeName = ref('')
 const typeCode = ref('')
 const loading = ref(false)
 const saving = ref(false)
+const publishing = ref(false)
+const uiStatus = ref('')
+const uiVersion = ref(1)
 const catalog = ref<any[]>([])
 const dragIndex = ref(-1)
 const overIndex = ref(-1)
@@ -142,6 +149,8 @@ onMounted(async () => {
       http.get(`/ticket/types/${typeId}/list-ui`),
     ])
     const schema = uiRes.data?.schema || {}
+    uiStatus.value = uiRes.data?.status || 'DRAFT'
+    uiVersion.value = uiRes.data?.version || 1
     const savedColumns: any[] = schema.columns || []
     const colMap = new Map(savedColumns.map((c: any) => [c.field, c]))
     const filterMap = new Map((schema.filters || []).map((f: any) => [f.field, f]))
@@ -189,9 +198,25 @@ async function save() {
       filters,
       rowActions: ['view', 'edit', 'submit', 'delete'],
     })
-    ElMessage.success('已保存列表配置')
+    ElMessage.success('已保存草稿')
+    const ui: any = await http.get(`/ticket/types/${typeId}/list-ui`)
+    uiStatus.value = ui.data?.status || 'DRAFT'
+    uiVersion.value = ui.data?.version || 1
   } finally {
     saving.value = false
+  }
+}
+
+async function publish() {
+  publishing.value = true
+  try {
+    await save()
+    const ui: any = await http.post(`/ticket/types/${typeId}/list-ui/publish`)
+    uiStatus.value = ui.data?.status || 'PUBLISHED'
+    uiVersion.value = ui.data?.version || uiVersion.value
+    ElMessage.success('已发布列表配置')
+  } finally {
+    publishing.value = false
   }
 }
 </script>

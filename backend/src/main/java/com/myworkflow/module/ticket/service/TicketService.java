@@ -2,11 +2,12 @@ package com.myworkflow.module.ticket.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myworkflow.common.context.UserContext;
 import com.myworkflow.common.exception.BizException;
 import com.myworkflow.common.result.PageResult;
 import com.myworkflow.module.process.dto.StartProcessRequest;
+import com.myworkflow.module.process.entity.WfProcessDef;
+import com.myworkflow.module.process.mapper.WfProcessDefMapper;
 import com.myworkflow.module.process.service.ProcessRuntimeService;
 import com.myworkflow.module.system.entity.SysUser;
 import com.myworkflow.module.system.mapper.SysUserMapper;
@@ -49,9 +50,8 @@ public class TicketService {
     public static final String STATUS_APPROVED = "APPROVED";
     public static final String STATUS_REJECTED = "REJECTED";
     public static final String STATUS_CANCELLED = "CANCELLED";
-    private static final DateTimeFormatter DAY = DateTimeFormatter.BASIC_ISO_DATE;
     private static final Set<String> FIELD_TYPES = new HashSet<String>(Arrays.asList(
-            "input", "textarea", "number", "select", "date", "user", "users"));
+            "input", "textarea", "number", "select", "date", "user", "users", "file"));
 
     private final TkTypeMapper typeMapper;
     private final TkFieldMapper fieldMapper;
@@ -60,10 +60,12 @@ public class TicketService {
     private final TkDetailUiMapper detailUiMapper;
     private final TkTicketMapper ticketMapper;
     private final SysUserMapper userMapper;
-    private final ObjectMapper objectMapper;
+    private final WfProcessDefMapper processDefMapper;
     private final ProcessRuntimeService processRuntimeService;
     private final MenuService menuService;
     private final PermissionService permissionService;
+    private final TicketUiService ticketUiService;
+    private final TicketFileService ticketFileService;
 
     public PageResult<TkType> typePage(long page, long size, String keyword) {
         Page<TkType> p = typeMapper.selectPage(new Page<>(page, size),
@@ -102,31 +104,25 @@ public class TicketService {
         if (exists != null && exists > 0) {
             throw new BizException("类型编码已存在");
         }
+        if (StringUtils.hasText(type.getProcessKey())) {
+            assertPublishedProcess(type.getProcessKey().trim());
+            type.setProcessKey(type.getProcessKey().trim());
+        }
+        if (type.getNoSeqLen() == null || type.getNoSeqLen() < 1) {
+            type.setNoSeqLen(4);
+        }
+        if (type.getNoSeqLen() > 8) {
+            type.setNoSeqLen(8);
+        }
+        if (!StringUtils.hasText(type.getNoDatePattern())) {
+            type.setNoDatePattern("yyyyMMdd");
+        }
         if (type.getStatus() == null) {
             type.setStatus(1);
         }
         if (type.getId() == null) {
             typeMapper.insert(type);
-            TkFormUi ui = new TkFormUi();
-            ui.setTypeId(type.getId());
-            ui.setVersion(1);
-            Map<String, Object> schema = new HashMap<>();
-            schema.put("version", 1);
-            schema.put("designer", "FcDesigner");
-            schema.put("raw", null);
-            schema.put("fields", Collections.emptyList());
-            ui.setSchema(schema);
-            formUiMapper.insert(ui);
-            TkListUi listUi = new TkListUi();
-            listUi.setTypeId(type.getId());
-            listUi.setVersion(1);
-            listUi.setSchema(TicketListSchema.defaultSchema());
-            listUiMapper.insert(listUi);
-            TkDetailUi detailUi = new TkDetailUi();
-            detailUi.setTypeId(type.getId());
-            detailUi.setVersion(1);
-            detailUi.setSchema(TicketDetailSchema.defaultSchema(Collections.<TkField>emptyList()));
-            detailUiMapper.insert(detailUi);
+            ticketUiService.initForType(type.getId());
         } else {
             typeMapper.updateById(type);
         }
@@ -215,148 +211,56 @@ public class TicketService {
         fieldMapper.deleteById(id);
     }
 
-    public TkFormUi getFormUi(Long typeId) {
+    public TkFormUi getFormUi(Long typeId, boolean published, Integer version) {
         typeDetail(typeId);
-        TkFormUi ui = formUiMapper.selectOne(new LambdaQueryWrapper<TkFormUi>()
-                .eq(TkFormUi::getTypeId, typeId)
-                .last("LIMIT 1"));
-        if (ui == null) {
-            ui = new TkFormUi();
-            ui.setTypeId(typeId);
-            ui.setVersion(1);
-            Map<String, Object> schema = new HashMap<>();
-            schema.put("version", 1);
-            schema.put("designer", "FcDesigner");
-            schema.put("raw", Collections.emptyList());
-            schema.put("fields", Collections.emptyList());
-            ui.setSchema(schema);
-            formUiMapper.insert(ui);
-        }
-        return ui;
+        return ticketUiService.getFormUi(typeId, published, version);
     }
 
-    /**
-     * 保存设计器 schema：版本 +1，按 field_key 更新已有字段，新增没有的，删掉画布上已去掉的。
-     */
     @Transactional(rollbackFor = Exception.class)
     public TkFormUi saveFormUi(Long typeId, Map<String, Object> body) {
         typeDetail(typeId);
-        TkFormUi ui = formUiMapper.selectOne(new LambdaQueryWrapper<TkFormUi>()
-                .eq(TkFormUi::getTypeId, typeId)
-                .last("LIMIT 1"));
-        if (ui == null) {
-            ui = new TkFormUi();
-            ui.setTypeId(typeId);
-            ui.setVersion(0);
-        }
-        Object raw = body == null ? null : body.get("raw");
-        if (raw == null && body != null) {
-            raw = body.get("rule");
-        }
-        List<TkField> parsed = FcDesignerSchemaParser.extractFields(objectMapper, raw);
-        upsertFields(typeId, parsed);
+        return ticketUiService.saveFormUi(typeId, body);
+    }
 
-        List<Map<String, Object>> fieldViews = new ArrayList<>();
-        for (TkField f : parsed) {
-            Map<String, Object> m = new HashMap<>();
-            m.put("field", f.getFieldKey());
-            m.put("title", f.getTitle());
-            m.put("type", f.getFieldType());
-            m.put("required", Integer.valueOf(1).equals(f.getRequired()));
-            fieldViews.add(m);
-        }
-        int next = (ui.getVersion() == null ? 0 : ui.getVersion()) + 1;
-        Map<String, Object> schema = new HashMap<>();
-        schema.put("version", next);
-        schema.put("designer", "FcDesigner");
-        schema.put("raw", raw == null ? Collections.emptyList() : raw);
-        schema.put("fields", fieldViews);
-        ui.setVersion(next);
-        ui.setSchema(schema);
-        if (ui.getId() == null) {
-            formUiMapper.insert(ui);
-        } else {
-            formUiMapper.updateById(ui);
-        }
-        return ui;
+    public TkFormUi publishFormUi(Long typeId) {
+        typeDetail(typeId);
+        return ticketUiService.publishForm(typeId);
+    }
+
+    public TkListUi getListUi(Long typeId, boolean published, Integer version) {
+        typeDetail(typeId);
+        return ticketUiService.getListUi(typeId, published, version);
     }
 
     public TkListUi getListUi(Long typeId) {
-        typeDetail(typeId);
-        TkListUi ui = listUiMapper.selectOne(new LambdaQueryWrapper<TkListUi>()
-                .eq(TkListUi::getTypeId, typeId)
-                .last("LIMIT 1"));
-        if (ui == null) {
-            ui = new TkListUi();
-            ui.setTypeId(typeId);
-            ui.setVersion(1);
-            ui.setSchema(TicketListSchema.defaultSchema());
-            listUiMapper.insert(ui);
-        }
-        return ui;
+        return getListUi(typeId, false, null);
     }
 
     @Transactional(rollbackFor = Exception.class)
     public TkListUi saveListUi(Long typeId, Map<String, Object> body) {
         typeDetail(typeId);
-        Map<String, Object> schema = TicketListSchema.normalize(body, listFields(typeId));
-        TkListUi ui = listUiMapper.selectOne(new LambdaQueryWrapper<TkListUi>()
-                .eq(TkListUi::getTypeId, typeId)
-                .last("LIMIT 1"));
-        if (ui == null) {
-            ui = new TkListUi();
-            ui.setTypeId(typeId);
-            ui.setVersion(0);
-        }
-        int next = (ui.getVersion() == null ? 0 : ui.getVersion()) + 1;
-        schema.put("version", next);
-        ui.setVersion(next);
-        ui.setSchema(schema);
-        if (ui.getId() == null) {
-            listUiMapper.insert(ui);
-        } else {
-            listUiMapper.updateById(ui);
-        }
-        return ui;
+        return ticketUiService.saveListUi(typeId, body, listFields(typeId));
     }
 
-    public TkDetailUi getDetailUi(Long typeId) {
+    public TkListUi publishListUi(Long typeId) {
         typeDetail(typeId);
-        TkDetailUi ui = detailUiMapper.selectOne(new LambdaQueryWrapper<TkDetailUi>()
-                .eq(TkDetailUi::getTypeId, typeId)
-                .last("LIMIT 1"));
-        if (ui == null) {
-            ui = new TkDetailUi();
-            ui.setTypeId(typeId);
-            ui.setVersion(1);
-            ui.setSchema(TicketDetailSchema.defaultSchema(listFields(typeId)));
-            detailUiMapper.insert(ui);
-        }
-        return ui;
+        return ticketUiService.publishList(typeId);
+    }
+
+    public TkDetailUi getDetailUi(Long typeId, boolean published, Integer version) {
+        typeDetail(typeId);
+        return ticketUiService.getDetailUi(typeId, published, version);
     }
 
     @Transactional(rollbackFor = Exception.class)
     public TkDetailUi saveDetailUi(Long typeId, Map<String, Object> body) {
         typeDetail(typeId);
-        Map<String, Object> schema = TicketDetailSchema.normalize(body, listFields(typeId));
-        TkDetailUi ui = detailUiMapper.selectOne(new LambdaQueryWrapper<TkDetailUi>()
-                .eq(TkDetailUi::getTypeId, typeId)
-                .last("LIMIT 1"));
-        if (ui == null) {
-            ui = new TkDetailUi();
-            ui.setTypeId(typeId);
-            ui.setVersion(0);
-        }
-        int next = (ui.getVersion() == null ? 0 : ui.getVersion()) + 1;
-        schema.put("version", next);
-        ui.setVersion(next);
-        ui.setSchema(schema);
-        if (ui.getId() == null) {
-            detailUiMapper.insert(ui);
-        } else {
-            detailUiMapper.updateById(ui);
-        }
-        return ui;
+        return ticketUiService.saveDetailUi(typeId, body, listFields(typeId));
+    }
+
+    public TkDetailUi publishDetailUi(Long typeId) {
+        typeDetail(typeId);
+        return ticketUiService.publishDetail(typeId);
     }
 
     /**
@@ -364,7 +268,7 @@ public class TicketService {
      */
     public PageResult<TkTicket> ticketPageByType(String typeCode, long page, long size, Map<String, String> params) {
         TkType type = typeByCode(typeCode);
-        Map<String, Object> schema = getListUi(type.getId()).getSchema();
+        Map<String, Object> schema = getListUi(type.getId(), true, null).getSchema();
         Map<String, Map<String, Object>> allowed = TicketListSchema.filterIndex(schema);
 
         LambdaQueryWrapper<TkTicket> w = new LambdaQueryWrapper<TkTicket>()
@@ -450,38 +354,6 @@ public class TicketService {
         }
     }
 
-    private void upsertFields(Long typeId, List<TkField> parsed) {
-        List<TkField> existing = fieldMapper.selectList(new LambdaQueryWrapper<TkField>()
-                .eq(TkField::getTypeId, typeId));
-        Map<String, TkField> byKey = new HashMap<>();
-        for (TkField f : existing) {
-            byKey.put(f.getFieldKey(), f);
-        }
-        Set<String> keep = new HashSet<>();
-        for (TkField incoming : parsed) {
-            keep.add(incoming.getFieldKey());
-            TkField old = byKey.get(incoming.getFieldKey());
-            incoming.setTypeId(typeId);
-            if (old != null) {
-                incoming.setId(old.getId());
-                if (incoming.getListVisible() == null) {
-                    incoming.setListVisible(old.getListVisible());
-                }
-                fieldMapper.updateById(incoming);
-            } else {
-                if (incoming.getListVisible() == null) {
-                    incoming.setListVisible(1);
-                }
-                fieldMapper.insert(incoming);
-            }
-        }
-        for (TkField old : existing) {
-            if (!keep.contains(old.getFieldKey())) {
-                fieldMapper.deleteById(old.getId());
-            }
-        }
-    }
-
     public PageResult<TkTicket> ticketPage(long page, long size, Long typeId, String keyword) {
         LambdaQueryWrapper<TkTicket> w = new LambdaQueryWrapper<TkTicket>()
                 .eq(typeId != null, TkTicket::getTypeId, typeId)
@@ -560,8 +432,10 @@ public class TicketService {
             SysUser u = userMapper.selectById(req.getStarterId());
             ticket.setStarterName(u == null ? String.valueOf(req.getStarterId()) : u.getRealName());
         }
-        ticket.setTicketNo(nextTicketNo(type.getTypeCode()));
+        ticket.setTicketNo(nextTicketNo(type));
+        ticket.setSchemaVersion(ticketUiService.latestPublishedFormVersion(type.getId()));
         ticketMapper.insert(ticket);
+        ticketFileService.bindFromFormData(ticket.getId(), ticket.getFormData());
         return ticket;
     }
 
@@ -578,6 +452,7 @@ public class TicketService {
             ticket.setFormData(req.getFormData());
         }
         ticketMapper.updateById(ticket);
+        ticketFileService.bindFromFormData(ticket.getId(), ticket.getFormData());
         return ticket;
     }
 
@@ -600,9 +475,17 @@ public class TicketService {
             throw new BizException("仅草稿或已驳回（已终止）的工单可提交");
         }
         TkType type = typeDetail(ticket.getTypeId());
+        if (!StringUtils.hasText(ticket.getTicketNo())) {
+            ticket.setTicketNo(nextTicketNo(type));
+            ticketMapper.updateById(ticket);
+        }
+        if (!StringUtils.hasText(ticket.getTicketNo())) {
+            throw new BizException("提交审批前必须已有工单号");
+        }
         if (!StringUtils.hasText(type.getProcessKey())) {
             throw new BizException("工单类型未绑定流程，请填写已发布的 processKey");
         }
+        assertPublishedProcess(type.getProcessKey());
         UserContext ctx = UserContext.get();
         if (ctx == null || ctx.getUserId() == null) {
             throw new BizException("请先登录");
@@ -670,21 +553,44 @@ public class TicketService {
         }
     }
 
-    private String nextTicketNo(String typeCode) {
-        String day = LocalDate.now().format(DAY);
-        String prefix = typeCode + "-" + day + "-";
+    private void assertPublishedProcess(String processKey) {
+        WfProcessDef def = processDefMapper.selectOne(new LambdaQueryWrapper<WfProcessDef>()
+                .eq(WfProcessDef::getProcessKey, processKey)
+                .eq(WfProcessDef::getStatus, 1)
+                .last("LIMIT 1"));
+        if (def == null) {
+            throw new BizException("绑定的流程不存在或未发布：" + processKey);
+        }
+    }
+
+    private String nextTicketNo(TkType type) {
+        String prefix = StringUtils.hasText(type.getNoPrefix()) ? type.getNoPrefix().trim() : type.getTypeCode();
+        String pattern = StringUtils.hasText(type.getNoDatePattern()) ? type.getNoDatePattern().trim() : "yyyyMMdd";
+        if (!pattern.matches("yyyyMMdd|yyyyMM|yyMMdd|yyyy-MM-dd")) {
+            pattern = "yyyyMMdd";
+        }
+        int seqLen = type.getNoSeqLen() == null ? 4 : type.getNoSeqLen();
+        if (seqLen < 1) {
+            seqLen = 4;
+        }
+        if (seqLen > 8) {
+            seqLen = 8;
+        }
+        String day = LocalDate.now().format(DateTimeFormatter.ofPattern(pattern));
+        String head = prefix + "-" + day + "-";
         TkTicket last = ticketMapper.selectOne(new LambdaQueryWrapper<TkTicket>()
-                .likeRight(TkTicket::getTicketNo, prefix)
+                .likeRight(TkTicket::getTicketNo, head)
                 .orderByDesc(TkTicket::getTicketNo)
                 .last("LIMIT 1"));
         int seq = 1;
-        if (last != null && last.getTicketNo() != null && last.getTicketNo().length() > prefix.length()) {
+        if (last != null && last.getTicketNo() != null && last.getTicketNo().length() > head.length()) {
             try {
-                seq = Integer.parseInt(last.getTicketNo().substring(prefix.length())) + 1;
+                seq = Integer.parseInt(last.getTicketNo().substring(head.length())) + 1;
             } catch (NumberFormatException ignored) {
                 seq = 1;
             }
         }
-        return prefix + String.format("%04d", seq);
+        String fmt = "%0" + seqLen + "d";
+        return head + String.format(fmt, seq);
     }
 }

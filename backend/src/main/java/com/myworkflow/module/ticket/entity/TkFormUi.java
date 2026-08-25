@@ -15,6 +15,8 @@ import java.util.Map;
 public class TkFormUi extends BaseEntity {
     private Long typeId;
     private Integer version;
+    /** DRAFT / PUBLISHED */
+    private String status;
     @TableField(value = "schema", typeHandler = JsonbMapTypeHandler.class)
     private Map<String, Object> schema;
 }
