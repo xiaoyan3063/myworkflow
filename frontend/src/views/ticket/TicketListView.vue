@@ -21,19 +21,18 @@
       </el-form-item>
     </el-form>
     <el-table :data="list" v-loading="loading">
-      <el-table-column prop="ticketNo" label="工单号" width="180" />
-      <el-table-column prop="title" label="标题" min-width="160" />
-      <el-table-column prop="typeName" label="类型" width="120" />
-      <el-table-column prop="starterName" label="发起人" width="100" />
-      <el-table-column label="状态" width="100">
+      <el-table-column prop="ticketNo" label="工单号" min-width="180" show-overflow-tooltip />
+      <el-table-column prop="typeName" label="类型" min-width="120" show-overflow-tooltip />
+      <el-table-column prop="starterName" label="发起人" min-width="100" show-overflow-tooltip />
+      <el-table-column label="状态" min-width="100">
         <template #default="{ row }">
           <el-tag size="small" :type="ticketStatusTone(row.status)">{{ ticketStatusText(row.status) }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="当前审批人" min-width="140">
+      <el-table-column label="当前审批人" min-width="140" show-overflow-tooltip>
         <template #default="{ row }">{{ row.currentApprover || '—' }}</template>
       </el-table-column>
-      <el-table-column prop="createTime" label="创建时间" width="180" />
+      <el-table-column prop="createTime" label="创建时间" min-width="180" show-overflow-tooltip />
       <el-table-column label="操作" width="220" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="$router.push(`/tickets/${row.typeCode}/${row.id}`)">查看</el-button>
@@ -48,11 +47,6 @@
     </div>
 
     <el-dialog v-model="visible" :title="form.id ? '编辑工单' : '新建草稿'" width="640px" destroy-on-close>
-      <el-form label-width="100px">
-        <el-form-item label="标题" required>
-          <el-input v-model="form.title" />
-        </el-form-item>
-      </el-form>
       <TicketForm v-model="formData" :schema="formSchema" />
       <template #footer>
         <el-button @click="visible = false">取消</el-button>
@@ -119,19 +113,17 @@ async function openEdit(row?: any) {
   await loadSchema(tid)
   Object.keys(form).forEach(k => delete form[k])
   if (row) {
-    Object.assign(form, { id: row.id, typeId: row.typeId, title: row.title })
+    Object.assign(form, { id: row.id, typeId: row.typeId })
     formData.value = { ...(row.formData || {}) }
   } else {
     form.typeId = tid
-    form.title = ''
     formData.value = {}
   }
   visible.value = true
 }
 
 async function save() {
-  if (!form.title) return ElMessage.warning('请填写标题')
-  const payload = { typeId: form.typeId || typeId.value, title: form.title, formData: { ...formData.value } }
+  const payload = { typeId: form.typeId || typeId.value, formData: { ...formData.value } }
   if (form.id) {
     await http.put(`/ticket/tickets/${form.id}`, payload)
   } else {

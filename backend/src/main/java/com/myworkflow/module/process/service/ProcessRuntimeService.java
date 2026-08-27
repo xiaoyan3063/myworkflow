@@ -34,6 +34,7 @@ import org.flowable.engine.RepositoryService;
 import org.flowable.engine.RuntimeService;
 import org.flowable.engine.TaskService;
 import org.flowable.engine.history.HistoricActivityInstance;
+import org.flowable.engine.history.HistoricProcessInstance;
 import org.flowable.engine.runtime.ProcessInstance;
 import org.flowable.engine.task.Comment;
 import org.flowable.identitylink.api.history.HistoricIdentityLink;
@@ -44,6 +45,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.io.InputStream;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -307,6 +309,8 @@ public class ProcessRuntimeService {
     @Transactional(rollbackFor = Exception.class)
     public void approve(TaskActionRequest req) {
         Task task = getTask(req.getTaskId());
+        assertCanHandle(task);
+        validateTaskRequiredFields(task);
         claimIfNeeded(task);
         boolean resubmitTask = BpmnEnhanceUtil.SYSTEM_RESUBMIT_ACTIVITY_ID
                 .equals(task.getTaskDefinitionKey());
@@ -489,6 +493,7 @@ public class ProcessRuntimeService {
     @Transactional(rollbackFor = Exception.class)
     public void transfer(TaskActionRequest req) {
         Task task = getTask(req.getTaskId());
+        assertCanHandle(task);
         if (!StringUtils.hasText(req.getTransferUserId())) {
             throw new BizException("请指定转办人");
         }
@@ -528,7 +533,38 @@ public class ProcessRuntimeService {
         m.put("taskName", task.getName());
         m.put("processInstanceId", processInstanceId);
         m.put("resubmitTask", BpmnEnhanceUtil.SYSTEM_RESUBMIT_ACTIVITY_ID.equals(task.getTaskDefinitionKey()));
+        m.putAll(taskFieldConfig(task));
         return m;
+    }
+
+    /**
+     * 返回当前用户在实例上的任务及字段权限。调用方可据此过滤提交字段；
+     * taskCandidateOrAssigned 保证转办后原处理人立即失去编辑权限。
+     */
+    public Map<String, Object> myTaskFieldConfig(String processInstanceId) {
+        Map<String, Object> task = myActiveTask(processInstanceId);
+        if (task == null) {
+            throw new BizException(403, "当前用户不是该节点处理人");
+        }
+        return task;
+    }
+
+    /** 工单字段保存后同步流程变量和实例快照，保证后续网关和审批人表达式读取新值。 */
+    public void syncFormData(String processInstanceId, Map<String, Object> formData) {
+        if (!StringUtils.hasText(processInstanceId)) {
+            throw new BizException("工单尚未进入审批");
+        }
+        Map<String, Object> safe = formData == null ? new HashMap<>() : new HashMap<>(formData);
+        runtimeService.setVariables(processInstanceId, safe);
+        WfProcessInstanceExt ext = findExt(processInstanceId);
+        if (ext != null) {
+            try {
+                ext.setFormData(objectMapper.writeValueAsString(safe));
+                instanceExtMapper.updateById(ext);
+            } catch (Exception e) {
+                throw new BizException("流程表单数据同步失败");
+            }
+        }
     }
 
     /** 当前用户是不是正被退回、需要改单重提的发起人 */
@@ -555,6 +591,100 @@ public class ProcessRuntimeService {
                 .taskCandidateOrAssigned(uid)
                 .active()
                 .count() > 0;
+    }
+
+    /**
+     * 节点字段的可见性：字段跟着它归属的节点走。
+     * 归属节点已经到达（含正在处理）的字段才展示，尚未走到的节点字段先不显示，
+     * 避免发起人和前置审批人看到后续环节才录入的内容。
+     */
+    public Map<String, List<String>> fieldVisibility(String processInstanceId) {
+        Map<String, List<String>> result = new HashMap<>();
+        result.put("nodeFields", new ArrayList<>());
+        result.put("hiddenFields", new ArrayList<>());
+        if (!StringUtils.hasText(processInstanceId)) {
+            return result;
+        }
+        HistoricProcessInstance instance = historyService.createHistoricProcessInstanceQuery()
+                .processInstanceId(processInstanceId).singleResult();
+        if (instance == null) {
+            return result;
+        }
+        Map<String, List<String>> byActivity =
+                BpmnEnhanceUtil.readTaskFieldsByActivity(processModelXml(instance.getProcessDefinitionId()));
+        Set<String> reached = historyService.createHistoricActivityInstanceQuery()
+                .processInstanceId(processInstanceId).list().stream()
+                .map(HistoricActivityInstance::getActivityId)
+                .collect(Collectors.toSet());
+
+        Set<String> all = new LinkedHashSet<>();
+        Set<String> visible = new LinkedHashSet<>();
+        byActivity.forEach((activityId, fields) -> {
+            all.addAll(fields);
+            if (reached.contains(activityId)) {
+                visible.addAll(fields);
+            }
+        });
+        List<String> hidden = all.stream().filter(f -> !visible.contains(f)).collect(Collectors.toList());
+        result.put("nodeFields", new ArrayList<>(all));
+        result.put("hiddenFields", hidden);
+        return result;
+    }
+
+    /** 流程还没发起时，所有节点字段都属于后续环节，创建工单时一律不显示。 */
+    public List<String> designNodeFields(String bpmnXml) {
+        Set<String> fields = new LinkedHashSet<>();
+        BpmnEnhanceUtil.readTaskFieldsByActivity(bpmnXml).values().forEach(fields::addAll);
+        return new ArrayList<>(fields);
+    }
+
+    private String processModelXml(String processDefinitionId) {
+        try (InputStream input = repositoryService.getProcessModel(processDefinitionId);
+             Scanner scanner = new Scanner(input, "UTF-8").useDelimiter("\\A")) {
+            return scanner.hasNext() ? scanner.next() : "";
+        } catch (Exception e) {
+            log.warn("读取流程模型失败 defId={}: {}", processDefinitionId, e.getMessage());
+            return "";
+        }
+    }
+
+    private Map<String, List<String>> taskFieldConfig(Task task) {
+        // 必须读取该任务实际运行的已部署版本。若读 wf_process_def 当前设计稿，
+        // 只保存但尚未发布的修改也会错误地影响在途实例。
+        return BpmnEnhanceUtil.readTaskFieldConfig(
+                processModelXml(task.getProcessDefinitionId()), task.getTaskDefinitionKey());
+    }
+
+    private void validateTaskRequiredFields(Task task) {
+        List<String> required = taskFieldConfig(task).get("requiredFields");
+        if (required == null || required.isEmpty()) {
+            return;
+        }
+        // 流程变量是节点保存后最先更新的一份，实例快照只作兜底
+        Map<String, Object> data = new HashMap<>();
+        WfProcessInstanceExt ext = findExt(task.getProcessInstanceId());
+        if (ext != null && StringUtils.hasText(ext.getFormData())) {
+            try {
+                data = objectMapper.readValue(ext.getFormData(), Map.class);
+            } catch (Exception e) {
+                throw new BizException("流程表单数据无法解析");
+            }
+        }
+        data.putAll(runtimeService.getVariables(task.getProcessInstanceId()));
+        final Map<String, Object> formData = data;
+        List<String> missing = required.stream()
+                .filter(field -> isBlankValue(formData.get(field)))
+                .collect(Collectors.toList());
+        if (!missing.isEmpty()) {
+            throw new BizException("请填写本节点必填字段：" + String.join("、", missing));
+        }
+    }
+
+    private boolean isBlankValue(Object value) {
+        if (value == null) return true;
+        if (value instanceof String) return !StringUtils.hasText((String) value);
+        if (value instanceof Collection) return ((Collection<?>) value).isEmpty();
+        return false;
     }
 
     public Map<String, Object> taskDetail(String taskId) {
@@ -964,16 +1094,24 @@ public class ProcessRuntimeService {
      */
     private void claimIfNeeded(Task task) {
         String userId = String.valueOf(UserContext.currentUserId());
-        if (StringUtils.hasText(task.getAssignee()) && !userId.equals(task.getAssignee())) {
-            // 候选人也允许办理
-            long cnt = taskService.createTaskQuery().taskId(task.getId()).taskCandidateOrAssigned(userId).count();
-            if (cnt == 0) throw new BizException("无权处理该任务");
-        }
+        assertCanHandle(task);
         // Flowable 记录历史任务在 create 监听器之前，监听器里设置的 assignee 不会同步到历史表，
         // 历史里留下的是任务创建那一刻的值。不回写的话「我的已办」会漏单、轨迹会显示错的处理人。
         // 运行时已经是本人时 setAssignee 会被引擎跳过，所以先置空再设一次强制落库。
         taskService.setAssignee(task.getId(), null);
         taskService.setAssignee(task.getId(), userId);
+    }
+
+    private void assertCanHandle(Task task) {
+        String userId = String.valueOf(UserContext.currentUserId());
+        long count = taskService.createTaskQuery()
+                .taskId(task.getId())
+                .taskCandidateOrAssigned(userId)
+                .active()
+                .count();
+        if (count == 0) {
+            throw new BizException(403, "无权处理该任务");
+        }
     }
 
     private Map<String, Object> toTaskMap(Task t) {
@@ -992,6 +1130,7 @@ public class ProcessRuntimeService {
             m.put("businessKey", ext.getBusinessKey());
             m.put("formData", ext.getFormData());
             m.put("processDefId", ext.getProcessDefId());
+            m.put("businessType", ext.getBusinessType());
         }
         return m;
     }

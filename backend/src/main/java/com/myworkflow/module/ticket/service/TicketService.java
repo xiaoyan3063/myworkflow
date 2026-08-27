@@ -412,6 +412,54 @@ public class TicketService {
         return ticket;
     }
 
+    /**
+     * 工单详情的字段可见性与可编辑性。
+     * 未发起时隐藏全部节点字段（只留创建环节字段）；已发起时隐藏尚未走到的节点字段。
+     */
+    public Map<String, Object> fieldAccess(Long id) {
+        TkTicket ticket = ticketDetail(id);
+        Map<String, Object> result = new HashMap<>();
+        if (!StringUtils.hasText(ticket.getProcessInstId())) {
+            List<String> nodeFields = typeNodeFields(ticket.getTypeId());
+            result.put("nodeFields", nodeFields);
+            result.put("hiddenFields", nodeFields);
+            return result;
+        }
+        result.putAll(processRuntimeService.fieldVisibility(ticket.getProcessInstId()));
+        Map<String, Object> task = processRuntimeService.myActiveTask(ticket.getProcessInstId());
+        if (task != null) {
+            result.putAll(task);
+        }
+        return result;
+    }
+
+    /** 类型绑定流程里所有节点字段，创建工单时用它把后续环节字段藏掉 */
+    public List<String> typeNodeFields(Long typeId) {
+        TkType type = typeDetail(typeId);
+        if (!StringUtils.hasText(type.getProcessKey())) {
+            return Collections.emptyList();
+        }
+        WfProcessDef def = processDefMapper.selectOne(new LambdaQueryWrapper<WfProcessDef>()
+                .eq(WfProcessDef::getProcessKey, type.getProcessKey())
+                .eq(WfProcessDef::getStatus, 1)
+                .last("LIMIT 1"));
+        return def == null ? Collections.emptyList()
+                : processRuntimeService.designNodeFields(def.getBpmnXml());
+    }
+
+    public TkTicket ticketByProcessInstance(String processInstanceId) {
+        if (!StringUtils.hasText(processInstanceId)) {
+            throw new BizException("缺少流程实例");
+        }
+        TkTicket ticket = ticketMapper.selectOne(new LambdaQueryWrapper<TkTicket>()
+                .eq(TkTicket::getProcessInstId, processInstanceId)
+                .last("LIMIT 1"));
+        if (ticket == null) {
+            throw new BizException("该流程实例未关联工单");
+        }
+        return ticketDetail(ticket.getId());
+    }
+
     @Transactional(rollbackFor = Exception.class)
     public TkTicket createDraft(TkTicket req) {
         if (req.getTypeId() == null) {
@@ -421,7 +469,6 @@ public class TicketService {
         UserContext ctx = UserContext.get();
         TkTicket ticket = new TkTicket();
         ticket.setTypeId(type.getId());
-        ticket.setTitle(StringUtils.hasText(req.getTitle()) ? req.getTitle() : type.getTypeName() + "草稿");
         ticket.setStatus(STATUS_DRAFT);
         ticket.setFormData(req.getFormData() == null ? new HashMap<String, Object>() : req.getFormData());
         if (ctx != null) {
@@ -433,6 +480,10 @@ public class TicketService {
             ticket.setStarterName(u == null ? String.valueOf(req.getStarterId()) : u.getRealName());
         }
         ticket.setTicketNo(nextTicketNo(type));
+        // 标题是工单主表摘要，给待办/流程实例用；新建草稿不再让用户填，默认用类型名+工单号
+        ticket.setTitle(StringUtils.hasText(req.getTitle())
+                ? req.getTitle()
+                : type.getTypeName() + " " + ticket.getTicketNo());
         ticket.setSchemaVersion(ticketUiService.latestPublishedFormVersion(type.getId()));
         ticketMapper.insert(ticket);
         ticketFileService.bindFromFormData(ticket.getId(), ticket.getFormData());
@@ -459,6 +510,48 @@ public class TicketService {
         ticketMapper.updateById(ticket);
         ticketFileService.bindFromFormData(ticket.getId(), ticket.getFormData());
         return ticket;
+    }
+
+    /**
+     * 审批中的节点字段保存。不能复用 updateDraft：这里必须按当前任务节点的字段白名单合并，
+     * 防止审批人篡改发起人字段或其他节点字段。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public TkTicket saveApprovalFields(Long id, Map<String, Object> submitted) {
+        TkTicket ticket = ticketDetail(id);
+        if (!STATUS_IN_APPROVAL.equals(ticket.getStatus()) || !StringUtils.hasText(ticket.getProcessInstId())) {
+            throw new BizException("仅审批中的工单可保存节点填写数据");
+        }
+        Map<String, Object> taskConfig = processRuntimeService.myTaskFieldConfig(ticket.getProcessInstId());
+        Object configured = taskConfig.get("writableFields");
+        Set<String> writable = new HashSet<>();
+        if (configured instanceof Iterable) {
+            for (Object field : (Iterable<?>) configured) {
+                if (field != null) writable.add(String.valueOf(field));
+            }
+        }
+        if (writable.isEmpty()) {
+            throw new BizException("当前审批节点没有可填写字段");
+        }
+        Map<String, Object> incoming = submitted == null ? Collections.emptyMap() : submitted;
+        List<String> forbidden = incoming.keySet().stream()
+                .filter(key -> !writable.contains(key))
+                .collect(java.util.stream.Collectors.toList());
+        if (!forbidden.isEmpty()) {
+            throw new BizException(403, "无权修改字段：" + String.join("、", forbidden));
+        }
+        Map<String, Object> merged = ticket.getFormData() == null
+                ? new HashMap<>() : new HashMap<>(ticket.getFormData());
+        for (String field : writable) {
+            if (incoming.containsKey(field)) {
+                merged.put(field, incoming.get(field));
+            }
+        }
+        ticket.setFormData(merged);
+        ticketMapper.updateById(ticket);
+        ticketFileService.bindFromFormData(ticket.getId(), merged);
+        processRuntimeService.syncFormData(ticket.getProcessInstId(), merged);
+        return ticketDetail(id);
     }
 
     public void deleteDraft(Long id) {

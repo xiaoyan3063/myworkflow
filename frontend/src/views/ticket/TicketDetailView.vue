@@ -13,6 +13,12 @@
           @click="save"
         >保存</el-button>
         <el-button
+          v-if="canEditApprovalFields"
+          type="primary"
+          :loading="saving"
+          @click="saveApprovalFields"
+        >保存节点数据</el-button>
+        <el-button
           v-if="hasAction('submit') && canSubmit && hasPerm('ticket:submit')"
           type="success"
           :loading="submitting"
@@ -42,7 +48,12 @@
 
     <el-row v-if="!loading" :gutter="20">
       <el-col :span="showRight ? 14 : 24">
-        <div v-for="(sec, i) in sections" :key="i" class="section">
+        <div
+          v-for="(sec, i) in sections"
+          v-show="mainOf(sec).length || formOf(sec).length"
+          :key="i"
+          class="section"
+        >
           <h3>{{ sec.title }}</h3>
           <div v-if="mainOf(sec).length" class="info">
             <div v-for="f in mainOf(sec)" :key="f" class="info-cell" :class="{ wide: f === 'processInstId' || f === 'title' }">
@@ -65,7 +76,34 @@
             :model-value="formData"
             :schema="formSchema"
             :only-fields="formOf(sec)"
-            :disabled="!canEdit || !hasPerm('ticket:update')"
+            :disabled="!canEdit"
+            :editable-fields="canEdit ? undefined : []"
+            :hidden-fields="hiddenFields"
+            @update:model-value="patchForm"
+          />
+        </div>
+
+        <div v-if="doneNodeFields.length" class="section">
+          <h3>审批节点信息</h3>
+          <TicketForm
+            class="sec-form"
+            :model-value="formData"
+            :schema="nodeSchema"
+            :only-fields="doneNodeFields"
+            :editable-fields="[]"
+            disabled
+          />
+        </div>
+
+        <div v-if="canEditApprovalFields" class="section">
+          <h3>本节点填写</h3>
+          <TicketForm
+            class="sec-form"
+            :model-value="formData"
+            :schema="nodeSchema"
+            :only-fields="nodeFields"
+            :editable-fields="nodeFields"
+            :required-fields="myTask.requiredFields || []"
             @update:model-value="patchForm"
           />
         </div>
@@ -110,8 +148,12 @@ const submitting = ref(false)
 const ticket = ref<any>({})
 const formData = ref<Record<string, any>>({})
 const formSchema = ref<any>({ fields: [], raw: [] })
+/** 节点可填字段可能是工单创建之后才加的，锁定版本里没有，这里单独用最新已发布 schema 渲染 */
+const nodeSchema = ref<any>({ fields: [], raw: [] })
 const timeline = ref<any>({ nodes: [] })
 const myTask = ref<any>(null)
+/** 后端按流程走到的节点算出的字段可见性：nodeFields 全部节点字段，hiddenFields 尚未走到的 */
+const fieldAccess = ref<any>({})
 const detailSchema = ref<any>({
   showTimeline: true,
   sections: [],
@@ -121,7 +163,26 @@ const detailSchema = ref<any>({
 const isDraftLike = computed(() => ticket.value.status === 'DRAFT' || ticket.value.status === 'REJECTED')
 // 被退回到发起人节点时工单仍是审批中，但持有重提待办的人要能改表单
 const canEdit = computed(() => isDraftLike.value || !!myTask.value?.resubmitTask)
+const canEditApprovalFields = computed(
+  () => !canEdit.value && Array.isArray(myTask.value?.writableFields) && myTask.value.writableFields.length > 0,
+)
 const canSubmit = computed(() => isDraftLike.value)
+const nodeFields = computed<string[]>(() => myTask.value?.writableFields || [])
+const hiddenFields = computed<string[]>(() => fieldAccess.value.hiddenFields || [])
+
+/**
+ * 归属节点已经走过、但详情配置里没有勾选的字段。
+ * 详情配置通常只列发起时的字段，审批中录入的内容不补一块出来就看不到。
+ */
+const doneNodeFields = computed<string[]>(() => {
+  const covered = new Set<string>([...nodeFields.value])
+  for (const sec of sections.value) {
+    for (const f of sec.fields || []) covered.add(f)
+  }
+  return (fieldAccess.value.nodeFields || []).filter(
+    (f: string) => !covered.has(f) && !hiddenFields.value.includes(f),
+  )
+})
 const sections = computed(() => detailSchema.value.sections || [])
 const hasTimeline = computed(() => !!(timeline.value?.startTime || timeline.value?.nodes?.length))
 const showRight = computed(() => detailSchema.value.showTimeline !== false)
@@ -137,7 +198,11 @@ function mainOf(sec: any): string[] {
 }
 
 function formOf(sec: any): string[] {
-  return (sec.fields || []).filter((f: string) => !MAIN_TITLE[f])
+  const fields = (sec.fields || []).filter(
+    (f: string) => !MAIN_TITLE[f] && !hiddenFields.value.includes(f),
+  )
+  // 本节点可填字段挪到「本节点填写」里，避免同一个字段渲染两遍
+  return canEditApprovalFields.value ? fields.filter((f: string) => !nodeFields.value.includes(f)) : fields
 }
 
 function mainTitle(f: string) {
@@ -174,6 +239,30 @@ async function save() {
   }
 }
 
+function approvalFieldData() {
+  const result: Record<string, any> = {}
+  for (const field of myTask.value?.writableFields || []) {
+    result[field] = formData.value[field]
+  }
+  return result
+}
+
+async function saveApprovalFields(showMessage = true) {
+  if (!canEditApprovalFields.value) return
+  saving.value = true
+  try {
+    const res: any = await http.patch(
+      `/ticket/tickets/${ticket.value.id}/approval-fields`,
+      approvalFieldData(),
+    )
+    ticket.value = res.data || ticket.value
+    formData.value = { ...(ticket.value.formData || formData.value) }
+    if (showMessage) ElMessage.success('节点数据已保存')
+  } finally {
+    saving.value = false
+  }
+}
+
 async function submit() {
   await ElMessageBox.confirm(`提交工单「${ticket.value.ticketNo}」进入审批？`, '确认')
   submitting.value = true
@@ -195,22 +284,51 @@ async function submit() {
 
 async function loadMyTask() {
   myTask.value = null
-  if (!ticket.value.processInstId) return
+  fieldAccess.value = {}
+  nodeSchema.value = { fields: [], raw: [] }
+  if (!ticket.value.id) return
   try {
-    const res: any = await http.get(`/runtime/instances/${ticket.value.processInstId}/my-task`)
-    myTask.value = res.data || null
+    const res: any = await http.get(`/ticket/tickets/${ticket.value.id}/field-access`)
+    fieldAccess.value = res.data || {}
+    myTask.value = fieldAccess.value.taskId ? fieldAccess.value : null
   } catch {
-    myTask.value = null
+    fieldAccess.value = {}
+  }
+  if ((nodeFields.value.length || doneNodeFields.value.length) && ticket.value.typeId) {
+    try {
+      const ui: any = await http.get(`/ticket/types/${ticket.value.typeId}/form-ui`, {
+        params: { published: true },
+      })
+      nodeSchema.value = ui.data?.schema || formSchema.value
+    } catch {
+      nodeSchema.value = formSchema.value
+    }
   }
 }
 
-/** 重新提交前先把改过的表单落库，否则审批人看到的还是退回前的内容 */
+function missingRequired(): string[] {
+  const titles = nodeSchema.value?.fields || []
+  return (myTask.value?.requiredFields || []).filter((field: string) => {
+    const v = formData.value[field]
+    return v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length)
+  }).map((field: string) => titles.find((f: any) => f.field === field)?.title || field)
+}
+
+/** 办理前先保存当前节点允许填写的数据，后端还会再次校验必填和字段白名单。 */
 async function saveBeforeAction() {
-  if (!myTask.value?.resubmitTask || !hasPerm('ticket:update')) return
-  await http.put(`/ticket/tickets/${ticket.value.id}`, {
-    title: ticket.value.title,
-    formData: { ...formData.value },
-  })
+  if (myTask.value?.resubmitTask && hasPerm('ticket:update')) {
+    await http.put(`/ticket/tickets/${ticket.value.id}`, {
+      title: ticket.value.title,
+      formData: { ...formData.value },
+    })
+  } else if (canEditApprovalFields.value) {
+    const missing = missingRequired()
+    if (missing.length) {
+      ElMessage.warning(`请填写本节点必填字段：${missing.join('、')}`)
+      throw new Error('required fields missing')
+    }
+    await saveApprovalFields(false)
+  }
 }
 
 async function onActionDone() {
@@ -265,9 +383,10 @@ onMounted(async () => {
           timeline.value = tl.data || { nodes: [] }
         }),
       )
-      jobs.push(loadMyTask())
     }
     await Promise.allSettled(jobs)
+    // 草稿也要拿字段可见性，创建阶段同样需要藏掉审批节点字段
+    await loadMyTask()
   } finally {
     loading.value = false
   }

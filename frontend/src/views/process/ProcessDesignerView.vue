@@ -172,6 +172,28 @@
               <div class="tip">超过设定小时数未处理会推送催办消息，填 0 表示不催办。</div>
             </el-form-item>
 
+            <el-form-item v-if="meta.ticketTypeId" label="本节点填写字段">
+              <div v-if="formFields.length" class="node-fields">
+                <div v-for="f in formFields" :key="f.field" class="node-field-row">
+                  <el-checkbox
+                    :model-value="nodeForm.writableFields.includes(f.field)"
+                    @change="(checked: boolean) => toggleWritableField(f.field, checked)"
+                  >
+                    {{ f.title || f.field }}
+                  </el-checkbox>
+                  <el-checkbox
+                    :model-value="nodeForm.requiredFields.includes(f.field)"
+                    :disabled="!nodeForm.writableFields.includes(f.field)"
+                    @change="(checked: boolean) => toggleRequiredField(f.field, checked)"
+                  >
+                    必填
+                  </el-checkbox>
+                </div>
+              </div>
+              <el-empty v-else description="请先绑定工单类型并配置字段" :image-size="48" />
+              <div class="tip">勾选的字段仅当前节点处理人可编辑；未勾选字段仍只读显示。</div>
+            </el-form-item>
+
             <div class="summary" :class="{ warn: !taskConfigured }">
               {{ taskSummary }}
             </div>
@@ -534,6 +556,8 @@ const nodeForm = reactive({
   assigneeValue: '',
   multiMode: 'or',
   dueHours: 0,
+  writableFields: [] as string[],
+  requiredFields: [] as string[],
   condition: '',
 })
 
@@ -783,10 +807,13 @@ async function loadFormFields() {
   const res: any = await http.get(`/process/forms/${meta.formId}`)
   try {
     const raw = JSON.parse(res.data?.formSchema || '[]')
-    formFields.value = (Array.isArray(raw) ? raw : []).map((f: any) => ({
-      ...f,
-      type: mapTicketFieldType(f.type),
-    }))
+    // 布局组件没有 field，不是能勾选填写的数据字段
+    formFields.value = (Array.isArray(raw) ? raw : [])
+      .filter((f: any) => f?.field)
+      .map((f: any) => ({
+        ...f,
+        type: mapTicketFieldType(f.type),
+      }))
   } catch {
     formFields.value = []
   }
@@ -813,6 +840,10 @@ function applySelection(element: any) {
   nodeForm.assigneeValue = cfg.assigneeValue || ''
   nodeForm.multiMode = cfg.multiMode || 'or'
   nodeForm.dueHours = cfg.dueHours || 0
+  nodeForm.writableFields = Array.isArray(cfg.writableFields) ? cfg.writableFields : []
+  nodeForm.requiredFields = Array.isArray(cfg.requiredFields)
+    ? cfg.requiredFields.filter((f: string) => nodeForm.writableFields.includes(f))
+    : []
   nodeForm.condition = bo.conditionExpression?.body || ''
 
   if (/Gateway$/.test(element.type)) {
@@ -867,6 +898,24 @@ function onAssigneeTypeChange() {
   applyTask()
 }
 
+function toggleWritableField(field: string, checked: boolean) {
+  nodeForm.writableFields = checked
+    ? [...new Set([...nodeForm.writableFields, field])]
+    : nodeForm.writableFields.filter((f) => f !== field)
+  if (!checked) {
+    nodeForm.requiredFields = nodeForm.requiredFields.filter((f) => f !== field)
+  }
+  applyTask()
+}
+
+function toggleRequiredField(field: string, checked: boolean) {
+  if (!nodeForm.writableFields.includes(field)) return
+  nodeForm.requiredFields = checked
+    ? [...new Set([...nodeForm.requiredFields, field])]
+    : nodeForm.requiredFields.filter((f) => f !== field)
+  applyTask()
+}
+
 function applyTask() {
   const element = selected.value
   if (!element || !modeler) return
@@ -880,6 +929,8 @@ function applyTask() {
       assigneeValue: nodeForm.assigneeType === 'starter' ? '' : nodeForm.assigneeValue,
       multiMode: nodeForm.multiMode,
       dueHours: nodeForm.dueHours,
+      writableFields: nodeForm.writableFields,
+      requiredFields: nodeForm.requiredFields,
     }
     const documentation = moddle.create('bpmn:Documentation', { text: JSON.stringify(cfg) })
     documentation.$parent = element.businessObject
@@ -1598,6 +1649,20 @@ function saveAndDeploy() {
   background: #e6f6ec;
   color: #16794c;
 }
+.node-fields {
+  width: 100%;
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+}
+.node-field-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+.node-field-row:last-child { border-bottom: 0; }
 :deep(.bjs-powered-by) {
   display: none;
 }

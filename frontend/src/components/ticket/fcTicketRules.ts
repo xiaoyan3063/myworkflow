@@ -96,6 +96,36 @@ export function dropEmptyOptions(rule: any): any {
   return out
 }
 
+/**
+ * 单选/多选/下拉字段存的是选项 value，列表等纯文本场景要换回 label 展示。
+ * 返回 字段 -> { value: label }。
+ */
+export function optionLabelMap(schema: any): Record<string, Record<string, string>> {
+  const out: Record<string, Record<string, string>> = {}
+  const put = (field: any, options: any) => {
+    if (!field || !Array.isArray(options)) return
+    const map: Record<string, string> = {}
+    for (const o of options) {
+      if (!o || typeof o !== 'object') continue
+      const value = o.value ?? o.label
+      if (value === undefined || value === null || value === '') continue
+      map[String(value)] = String(o.label ?? o.value)
+    }
+    if (Object.keys(map).length) out[String(field)] = map
+  }
+  const walk = (items: any[]) => {
+    for (const item of items || []) {
+      if (!item || typeof item !== 'object') continue
+      put(item.field, item.options || item.props?.options)
+      if (Array.isArray(item.children)) walk(item.children)
+      if (item.control) walk(Array.isArray(item.control) ? item.control : [item.control])
+    }
+  }
+  walk(Array.isArray(schema?.raw) ? schema.raw : [])
+  walk(Array.isArray(schema?.fields) ? schema.fields : [])
+  return out
+}
+
 export function filterRulesByFields(rules: any[], fields?: string[]): any[] {
   if (!fields || !fields.length) return dropEmptyOptions(rules || [])
   const allow = new Set(fields)

@@ -161,6 +161,16 @@ async function load() {
   try {
     const res: any = await http.get(`/runtime/tasks/${route.params.taskId}`)
     detail.value = res.data || {}
+    // 工单类待办统一到工单详情办理，那里会按节点字段权限展示完整表单。
+    if (detail.value.businessType === 'TICKET' && detail.value.processInstanceId) {
+      const ticket: any = await http.get(
+        `/ticket/tickets/by-process/${detail.value.processInstanceId}`,
+      )
+      if (ticket.data?.id && ticket.data?.typeCode) {
+        await router.replace(`/tickets/${ticket.data.typeCode}/${ticket.data.id}`)
+        return
+      }
+    }
     try {
       editFormData.value = JSON.parse(detail.value.formData || '{}')
     } catch {

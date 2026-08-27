@@ -52,7 +52,8 @@ final class FcDesignerSchemaParser {
             return;
         }
         String type = node.path("type").asText("");
-        String fieldKey = firstText(node, "field", "name");
+        // 只有 field 才是数据字段；栅格/卡片/标签页等布局组件只有 name，不能当成工单字段
+        String fieldKey = node.path("field").asText(null);
         if (StringUtils.hasText(fieldKey) && !isLayout(type)) {
             TkField field = new TkField();
             field.setFieldKey(fieldKey.trim());

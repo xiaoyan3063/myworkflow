@@ -18,6 +18,7 @@ import java.io.StringWriter;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -92,6 +93,93 @@ public final class BpmnEnhanceUtil {
             }
         } catch (Exception ignored) {
             // 读不出来就当作没有发起人节点
+        }
+        return result;
+    }
+
+    /**
+     * 读取节点可填写/必填字段。字段配置属于业务设计稿，不写入 Flowable 扩展属性，
+     * 仍保存在 userTask 的 documentation JSON 中。
+     */
+    public static Map<String, List<String>> readTaskFieldConfig(String xml, String activityId) {
+        Map<String, List<String>> result = new HashMap<>();
+        result.put("writableFields", new ArrayList<>());
+        result.put("requiredFields", new ArrayList<>());
+        if (xml == null || xml.isEmpty() || activityId == null || activityId.isEmpty()) {
+            return result;
+        }
+        try {
+            for (Element task : userTasks(parse(xml))) {
+                if (!activityId.equals(task.getAttribute("id"))) {
+                    continue;
+                }
+                JSONObject json = configJson(task);
+                if (json == null) {
+                    return result;
+                }
+                List<String> writable = stringList(json.get("writableFields"));
+                List<String> required = stringList(json.get("requiredFields"));
+                required.removeIf(field -> !writable.contains(field));
+                result.put("writableFields", writable);
+                result.put("requiredFields", required);
+                return result;
+            }
+        } catch (Exception ignored) {
+            // 老流程或损坏的附加配置按“无可填字段”处理，不能扩大权限
+        }
+        return result;
+    }
+
+    /**
+     * 读取全部用户任务的可填字段，返回 节点ID -> 字段列表。
+     * 决定字段归属哪个节点：没有归属的字段属于发起环节，归属节点未走到的字段先不展示。
+     */
+    public static Map<String, List<String>> readTaskFieldsByActivity(String xml) {
+        Map<String, List<String>> result = new LinkedHashMap<>();
+        if (xml == null || xml.isEmpty()) {
+            return result;
+        }
+        try {
+            for (Element task : userTasks(parse(xml))) {
+                String id = task.getAttribute("id");
+                JSONObject json = configJson(task);
+                if (id == null || id.isEmpty() || json == null) {
+                    continue;
+                }
+                List<String> writable = stringList(json.get("writableFields"));
+                if (!writable.isEmpty()) {
+                    result.put(id, writable);
+                }
+            }
+        } catch (Exception ignored) {
+            // 解析不出来时当作没有节点字段，保持旧流程的展示方式
+        }
+        return result;
+    }
+
+    private static Document parse(String xml) throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        factory.setNamespaceAware(true);
+        return factory.newDocumentBuilder()
+                .parse(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    private static JSONObject configJson(Element task) {
+        Element config = firstChild(task, "documentation");
+        if (config == null || !JSONUtil.isTypeJSON(config.getTextContent())) {
+            return null;
+        }
+        return JSONUtil.parseObj(config.getTextContent());
+    }
+
+    private static List<String> stringList(Object value) {
+        List<String> result = new ArrayList<>();
+        if (value instanceof Iterable) {
+            for (Object item : (Iterable<?>) value) {
+                if (item != null && !String.valueOf(item).trim().isEmpty()) {
+                    result.add(String.valueOf(item));
+                }
+            }
         }
         return result;
     }
@@ -214,8 +302,19 @@ public final class BpmnEnhanceUtil {
             assigneeValue = obj.getStr("assigneeValue", "");
             multiMode = obj.getStr("multiMode", "or");
             dueHours = obj.getInt("dueHours", 0);
-            // 配置是设计器的内部数据，不必带到 Flowable 里当作任务说明
-            task.removeChild(config);
+            // 审批人配置已翻译成监听器，不必带进 Flowable；但节点可填字段要留在部署版本里，
+            // 运行时按实例实际部署的版本判权限，未发布的设计改动才不会影响在途单据。
+            List<String> writable = stringList(obj.get("writableFields"));
+            List<String> required = stringList(obj.get("requiredFields"));
+            required.retainAll(writable);
+            if (writable.isEmpty()) {
+                task.removeChild(config);
+            } else {
+                JSONObject kept = new JSONObject();
+                kept.set("writableFields", writable);
+                kept.set("requiredFields", required);
+                config.setTextContent(kept.toString());
+            }
         } else if (hasOwnAssignment(task)) {
             // 手写的 BPMN 直接在 XML 里配了审批人，没有设计器配置时不能拿默认值把它覆盖掉，
             // 否则运行时解析不到审批人，任务会全部回退给发起人

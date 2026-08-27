@@ -36,8 +36,8 @@
         :key="col.field"
         :prop="col.field"
         :label="col.title"
-        :width="col.width || undefined"
-        :min-width="col.width ? undefined : 120"
+        :min-width="col.width || 140"
+        show-overflow-tooltip
       >
         <template #default="{ row }">
           <el-tag v-if="col.field === 'status'" size="small" :type="ticketStatusTone(row.status)">
@@ -61,12 +61,7 @@
     </div>
 
     <el-dialog v-model="visible" :title="form.id ? '编辑工单' : '新建草稿'" width="640px" destroy-on-close>
-      <el-form label-width="100px">
-        <el-form-item label="标题" required>
-          <el-input v-model="form.title" />
-        </el-form-item>
-      </el-form>
-      <TicketForm v-model="formData" :schema="formSchema" />
+      <TicketForm v-model="formData" :schema="formSchema" :hidden-fields="nodeFields" />
       <template #footer>
         <el-button @click="visible = false">取消</el-button>
         <el-button type="primary" @click="save">保存</el-button>
@@ -83,6 +78,7 @@ import http from '@/utils/http'
 import TicketForm from '@/components/ticket/TicketForm.vue'
 import TicketFileLinks from '@/components/ticket/TicketFileLinks.vue'
 import { looksLikeFileIds, normalizeFileIds } from '@/components/ticket/ticketFiles'
+import { optionLabelMap } from '@/components/ticket/fcTicketRules'
 import { loadUserNames, toIds, userNamesOf } from '@/utils/userNames'
 import { TICKET_STATUS, ticketStatusText, ticketStatusTone } from '@/utils/status'
 import { hasPerm } from '@/utils/permission'
@@ -102,6 +98,8 @@ const visible = ref(false)
 const form = reactive<any>({})
 const formData = ref<Record<string, any>>({})
 const formSchema = ref<any>({ fields: [], raw: [] })
+/** 归属审批节点的字段由对应处理人在审批时填写，新建/编辑草稿时不展示 */
+const nodeFields = ref<string[]>([])
 
 function canEdit(row: any) {
   return row.status === 'DRAFT' || row.status === 'REJECTED'
@@ -136,11 +134,23 @@ function isFileCell(row: any, col: any) {
   return fileFields.value.has(col.field) ? normalizeFileIds(v).length > 0 : looksLikeFileIds(v)
 }
 
+const optionLabels = computed(() => optionLabelMap(formSchema.value))
+
+/** 单选/多选/下拉存的是选项 value，列表里要显示选项名 */
+function optionText(field: string, v: any) {
+  const map = optionLabels.value[field]
+  if (!map) return null
+  const label = (x: any) => map[String(x)] ?? String(x)
+  return Array.isArray(v) ? v.map(label).join('、') : label(v)
+}
+
 function cellValue(row: any, col: any) {
   if (col.from === 'json') {
     const v = row.formData?.[col.field]
     if (v === undefined || v === null || v === '') return '-'
     if (userFields.value.has(col.field)) return userNamesOf(v) || '-'
+    const text = optionText(col.field, v)
+    if (text !== null) return text || '-'
     return Array.isArray(v) ? v.join('、') : String(v)
   }
   const v = row[mainProp(col.field)]
@@ -176,6 +186,12 @@ async function loadSchema() {
   filters.value = schema.filters || []
   const formUi: any = await http.get(`/ticket/types/${type.value.id}/form-ui`, { params: { published: true } })
   formSchema.value = formUi.data?.schema || { fields: [], raw: [] }
+  try {
+    const nf: any = await http.get(`/ticket/types/${type.value.id}/node-fields`)
+    nodeFields.value = nf.data || []
+  } catch {
+    nodeFields.value = []
+  }
 }
 
 async function load() {
@@ -212,19 +228,17 @@ async function loadCellUserNames() {
 async function openEdit(row?: any) {
   Object.keys(form).forEach((k) => delete form[k])
   if (row) {
-    Object.assign(form, { id: row.id, typeId: row.typeId, title: row.title })
+    Object.assign(form, { id: row.id, typeId: row.typeId })
     formData.value = { ...(row.formData || {}) }
   } else {
     form.typeId = type.value.id
-    form.title = ''
     formData.value = {}
   }
   visible.value = true
 }
 
 async function save() {
-  if (!form.title) return ElMessage.warning('请填写标题')
-  const payload = { typeId: form.typeId || type.value.id, title: form.title, formData: { ...formData.value } }
+  const payload = { typeId: form.typeId || type.value.id, formData: { ...formData.value } }
   if (form.id) {
     await http.put(`/ticket/tickets/${form.id}`, payload)
   } else {

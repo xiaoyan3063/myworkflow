@@ -138,7 +138,12 @@ function openApprove() {
 async function approve() {
   acting.value = true
   try {
-    await props.beforeAction?.()
+    try {
+      await props.beforeAction?.()
+    } catch {
+      // 钩子（如节点必填校验、保存失败）已经给过提示，这里只中断办理
+      return
+    }
     await http.post('/runtime/approve', {
       taskId: props.task.taskId,
       comment: comment.value,

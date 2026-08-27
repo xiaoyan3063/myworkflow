@@ -41,6 +41,12 @@ public class TicketController {
     }
 
     @ApiOperation("工单详情")
+    @GetMapping("/by-process/{processInstanceId}")
+    public R<TkTicket> byProcessInstance(@PathVariable String processInstanceId) {
+        return R.ok(ticketService.ticketByProcessInstance(processInstanceId));
+    }
+
+    @ApiOperation("工单详情")
     @GetMapping("/{id}")
     public R<TkTicket> detail(@PathVariable Long id) {
         return R.ok(ticketService.ticketDetail(id));
@@ -58,6 +64,19 @@ public class TicketController {
     @PutMapping("/{id}")
     public R<TkTicket> update(@PathVariable Long id, @RequestBody TkTicket ticket) {
         return R.ok(ticketService.updateDraft(id, ticket));
+    }
+
+    @ApiOperation("字段可见性与当前节点可编辑字段")
+    @GetMapping("/{id}/field-access")
+    public R<Map<String, Object>> fieldAccess(@PathVariable Long id) {
+        return R.ok(ticketService.fieldAccess(id));
+    }
+
+    @ApiOperation("当前审批人保存本节点可填写字段")
+    @PatchMapping("/{id}/approval-fields")
+    public R<TkTicket> saveApprovalFields(@PathVariable Long id,
+                                          @RequestBody Map<String, Object> formData) {
+        return R.ok(ticketService.saveApprovalFields(id, formData));
     }
 
     @ApiOperation("删除草稿")

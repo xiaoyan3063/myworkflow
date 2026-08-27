@@ -72,6 +72,12 @@ public class TicketTypeController {
         return R.ok(ticketService.listFields(id));
     }
 
+    @ApiOperation("绑定流程中归属审批节点的字段（创建工单时隐藏）")
+    @GetMapping("/{id}/node-fields")
+    public R<List<String>> nodeFields(@PathVariable Long id) {
+        return R.ok(ticketService.typeNodeFields(id));
+    }
+
     @ApiOperation("保存字段")
     @RequiresPerm("ticket:type:save")
     @PostMapping("/{id}/fields")
