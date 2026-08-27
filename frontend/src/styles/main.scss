@@ -45,8 +45,9 @@ a {
 }
 
 .page-card {
-  background: rgba(255, 255, 255, 0.82);
-  backdrop-filter: blur(12px);
+  /* 不能用 backdrop-filter：它会成为 fixed 定位的包含块，
+     让表格 show-overflow-tooltip 等浮层错位 */
+  background: rgba(255, 255, 255, 0.9);
   border: 1px solid rgba(11, 61, 46, 0.08);
   border-radius: var(--mw-radius);
   box-shadow: var(--mw-shadow);

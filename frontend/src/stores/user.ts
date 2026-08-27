@@ -7,7 +7,8 @@ export const useUserStore = defineStore('user', () => {
   const profile = ref<any>(null)
 
   async function login(username: string, password: string) {
-    const res: any = await http.post('/auth/login', { username, password })
+    const res: any = await http.post('/auth/login', { username, password },
+      { headers: { 'X-Client-Type': 'WEB' } })
     token.value = res.data.token
     localStorage.setItem('mw_token', res.data.token)
     profile.value = res.data

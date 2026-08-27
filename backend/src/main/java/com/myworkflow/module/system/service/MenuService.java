@@ -174,6 +174,7 @@ public class MenuService {
             seed();
         }
         ensureTicketDir();
+        ensureSystemLogMenu();
         syncAllTypeMenus();
         grantAllToAdminIfEmpty();
         ensureSalesRole();
@@ -183,6 +184,18 @@ public class MenuService {
         if (menuMapper.selectById(TICKET_DIR_ID) == null) {
             insert(TICKET_DIR_ID, 0L, "DIR", "工单", null, "Document", null, 30);
         }
+    }
+
+    private void ensureSystemLogMenu() {
+        SysMenu system = menuMapper.selectById(40L);
+        if (system != null && !"系统管理".equals(system.getMenuName())) {
+            system.setMenuName("系统管理");
+            menuMapper.updateById(system);
+        }
+        if (menuMapper.selectById(46L) == null) {
+            insert(46L, 40L, "MENU", "系统日志", "/system-logs", "Document", "sys:log", 5);
+        }
+        grantToAdmin(46L);
     }
 
     private void grantToAdmin(Long menuId) {
@@ -273,11 +286,12 @@ public class MenuService {
         insert(36L, TICKET_DIR_ID, "BUTTON", "删除草稿", null, null, "ticket:delete", 84);
         insert(37L, TICKET_DIR_ID, "BUTTON", "保存类型/设计", null, null, "ticket:type:save", 85);
         insert(38L, TICKET_DIR_ID, "BUTTON", "删除类型", null, null, "ticket:type:delete", 86);
-        insert(40L, 0L, "DIR", "组织权限", null, "OfficeBuilding", null, 40);
+        insert(40L, 0L, "DIR", "系统管理", null, "OfficeBuilding", null, 40);
         insert(41L, 40L, "MENU", "用户管理", "/users", null, "sys:user", 1);
         insert(42L, 40L, "MENU", "部门管理", "/depts", null, "sys:dept", 2);
         insert(43L, 40L, "MENU", "角色管理", "/roles", null, "sys:role", 3);
         insert(44L, 40L, "MENU", "菜单管理", "/menus", null, "sys:menu", 4);
+        insert(46L, 40L, "MENU", "系统日志", "/system-logs", "Document", "sys:log", 5);
         insert(45L, 0L, "MENU", "消息中心", "/messages", "Bell", null, 90);
         log.info("已写入默认菜单");
     }

@@ -54,6 +54,56 @@ CREATE TABLE IF NOT EXISTS sys_user (
     deleted         INT DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS sys_login_log (
+    id              BIGINT PRIMARY KEY,
+    tenant_id       BIGINT DEFAULT 0,
+    user_id         BIGINT,
+    username        VARCHAR(64),
+    real_name       VARCHAR(64),
+    status          INT NOT NULL,
+    message         VARCHAR(512),
+    ip              VARCHAR(64),
+    client_type     VARCHAR(16),
+    user_agent      VARCHAR(512),
+    create_time     TIMESTAMP
+);
+
+ALTER TABLE sys_login_log ADD COLUMN IF NOT EXISTS real_name VARCHAR(64);
+ALTER TABLE sys_login_log ADD COLUMN IF NOT EXISTS client_type VARCHAR(16);
+
+CREATE INDEX IF NOT EXISTS idx_login_log_tenant_time
+    ON sys_login_log (tenant_id, create_time);
+CREATE INDEX IF NOT EXISTS idx_login_log_username_time
+    ON sys_login_log (username, create_time);
+
+CREATE TABLE IF NOT EXISTS sys_oper_log (
+    id              BIGINT PRIMARY KEY,
+    tenant_id       BIGINT DEFAULT 0,
+    user_id         BIGINT,
+    username        VARCHAR(64),
+    real_name       VARCHAR(64),
+    module          VARCHAR(64),
+    title           VARCHAR(128),
+    request_uri     VARCHAR(512),
+    http_method     VARCHAR(16),
+    oper_param      TEXT,
+    status          INT NOT NULL,
+    error_msg       VARCHAR(1000),
+    cost_ms         BIGINT,
+    ip              VARCHAR(64),
+    user_agent      VARCHAR(512),
+    source          VARCHAR(16) DEFAULT 'WEB',
+    ticket_type_name VARCHAR(128),
+    create_time     TIMESTAMP
+);
+
+ALTER TABLE sys_oper_log ADD COLUMN IF NOT EXISTS ticket_type_name VARCHAR(128);
+
+CREATE INDEX IF NOT EXISTS idx_oper_log_tenant_time
+    ON sys_oper_log (tenant_id, create_time);
+CREATE INDEX IF NOT EXISTS idx_oper_log_username_time
+    ON sys_oper_log (username, create_time);
+
 CREATE TABLE IF NOT EXISTS sys_role (
     id              BIGINT PRIMARY KEY,
     tenant_id       BIGINT DEFAULT 0,

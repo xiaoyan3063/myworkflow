@@ -31,6 +31,7 @@ const router = createRouter({
         { path: 'depts', name: 'depts', component: () => import('@/views/system/DeptView.vue'), meta: { title: '部门管理' } },
         { path: 'roles', name: 'roles', component: () => import('@/views/system/RoleView.vue'), meta: { title: '角色管理' } },
         { path: 'menus', name: 'menus', component: () => import('@/views/system/MenuView.vue'), meta: { title: '菜单管理' } },
+        { path: 'system-logs', name: 'systemLogs', component: () => import('@/views/system/SystemLogView.vue'), meta: { title: '系统日志' } },
         { path: 'ticket-types', name: 'ticketTypes', component: () => import('@/views/ticket/TicketTypeView.vue'), meta: { title: '工单类型' } },
         { path: 'ticket-types/:id/form', name: 'ticketFormDesign', component: () => import('@/views/ticket/TicketFormDesignerView.vue'), meta: { title: '表单设计' } },
         { path: 'ticket-types/:id/list', name: 'ticketListDesign', component: () => import('@/views/ticket/TicketListDesignerView.vue'), meta: { title: '列表配置' } },
