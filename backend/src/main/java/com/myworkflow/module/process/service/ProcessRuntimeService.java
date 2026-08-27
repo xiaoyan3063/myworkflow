@@ -501,6 +501,62 @@ public class ProcessRuntimeService {
                 "TRANSFER", task.getId());
     }
 
+    /**
+     * 当前用户在该实例上的待办任务，没有则返回 null。
+     * 工单详情据此决定要不要显示审批按钮，省得审批人绕回待办列表。
+     */
+    public Map<String, Object> myActiveTask(String processInstanceId) {
+        if (!StringUtils.hasText(processInstanceId)) {
+            return null;
+        }
+        Long userId = UserContext.currentUserId();
+        if (userId == null) {
+            return null;
+        }
+        List<Task> tasks = taskService.createTaskQuery()
+                .processInstanceId(processInstanceId)
+                .taskCandidateOrAssigned(String.valueOf(userId))
+                .active()
+                .orderByTaskCreateTime().asc()
+                .list();
+        if (tasks.isEmpty()) {
+            return null;
+        }
+        Task task = tasks.get(0);
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("taskId", task.getId());
+        m.put("taskName", task.getName());
+        m.put("processInstanceId", processInstanceId);
+        m.put("resubmitTask", BpmnEnhanceUtil.SYSTEM_RESUBMIT_ACTIVITY_ID.equals(task.getTaskDefinitionKey()));
+        return m;
+    }
+
+    /** 当前用户是不是正被退回、需要改单重提的发起人 */
+    public boolean hasResubmitTask(String processInstanceId) {
+        Map<String, Object> task = myActiveTask(processInstanceId);
+        return task != null && Boolean.TRUE.equals(task.get("resubmitTask"));
+    }
+
+    /** 处理过或当前待办的人都算参与人，业务单据的可见性判断会用到 */
+    public boolean isInvolved(String processInstanceId, Long userId) {
+        if (!StringUtils.hasText(processInstanceId) || userId == null) {
+            return false;
+        }
+        String uid = String.valueOf(userId);
+        long handled = historyService.createHistoricTaskInstanceQuery()
+                .processInstanceId(processInstanceId)
+                .taskInvolvedUser(uid)
+                .count();
+        if (handled > 0) {
+            return true;
+        }
+        return taskService.createTaskQuery()
+                .processInstanceId(processInstanceId)
+                .taskCandidateOrAssigned(uid)
+                .active()
+                .count() > 0;
+    }
+
     public Map<String, Object> taskDetail(String taskId) {
         Task task = taskService.createTaskQuery().taskId(taskId).singleResult();
         Map<String, Object> m = new HashMap<>();

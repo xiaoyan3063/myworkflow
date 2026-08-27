@@ -12,7 +12,13 @@
     <el-table :data="list" v-loading="loading" :row-class-name="rowClass">
       <el-table-column prop="title" label="标题" min-width="160" />
       <el-table-column prop="content" label="内容" min-width="240" />
-      <el-table-column prop="msgType" label="类型" width="100" />
+      <el-table-column label="类型" width="100">
+        <template #default="{ row }">
+          <el-tag size="small" :type="msgTypeTone(row.msgType)" effect="light">
+            {{ msgTypeText(row.msgType) }}
+          </el-tag>
+        </template>
+      </el-table-column>
       <el-table-column label="已读" width="90">
         <template #default="{ row }">
           <el-tag :type="row.readFlag === 1 ? 'info' : 'danger'" effect="light">
@@ -34,6 +40,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import http from '@/utils/http'
+import { msgTypeText, msgTypeTone } from '@/utils/status'
 
 const list = ref<any[]>([])
 const loading = ref(false)

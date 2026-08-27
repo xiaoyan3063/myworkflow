@@ -18,10 +18,27 @@
           :loading="submitting"
           @click="submit"
         >提交审批</el-button>
+        <ApprovalActions
+          v-if="myTask"
+          :task="myTask"
+          :before-action="saveBeforeAction"
+          @done="onActionDone"
+        />
         <el-button v-if="hasAction('cancel')" @click="goBack">返回</el-button>
         <el-button v-else @click="goBack">返回列表</el-button>
       </div>
     </div>
+
+    <el-alert
+      v-if="myTask"
+      class="task-tip"
+      :type="myTask.resubmitTask ? 'warning' : 'info'"
+      :closable="false"
+      show-icon
+      :title="myTask.resubmitTask
+        ? '该工单已被退回，请修改后重新提交'
+        : `当前节点【${myTask.taskName}】待您审批`"
+    />
 
     <el-row v-if="!loading" :gutter="20">
       <el-col :span="showRight ? 14 : 24">
@@ -69,6 +86,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import http from '@/utils/http'
 import TicketForm from '@/components/ticket/TicketForm.vue'
 import ApprovalTimeline from '@/components/ApprovalTimeline.vue'
+import ApprovalActions from '@/components/ApprovalActions.vue'
 import { ticketStatusText, ticketStatusTone } from '@/utils/status'
 import { hasPerm } from '@/utils/permission'
 
@@ -93,14 +111,17 @@ const ticket = ref<any>({})
 const formData = ref<Record<string, any>>({})
 const formSchema = ref<any>({ fields: [], raw: [] })
 const timeline = ref<any>({ nodes: [] })
+const myTask = ref<any>(null)
 const detailSchema = ref<any>({
   showTimeline: true,
   sections: [],
   actions: ['save', 'submit'],
 })
 
-const canEdit = computed(() => ticket.value.status === 'DRAFT' || ticket.value.status === 'REJECTED')
-const canSubmit = computed(() => canEdit.value)
+const isDraftLike = computed(() => ticket.value.status === 'DRAFT' || ticket.value.status === 'REJECTED')
+// 被退回到发起人节点时工单仍是审批中，但持有重提待办的人要能改表单
+const canEdit = computed(() => isDraftLike.value || !!myTask.value?.resubmitTask)
+const canSubmit = computed(() => isDraftLike.value)
 const sections = computed(() => detailSchema.value.sections || [])
 const hasTimeline = computed(() => !!(timeline.value?.startTime || timeline.value?.nodes?.length))
 const showRight = computed(() => detailSchema.value.showTimeline !== false)
@@ -172,6 +193,30 @@ async function submit() {
   }
 }
 
+async function loadMyTask() {
+  myTask.value = null
+  if (!ticket.value.processInstId) return
+  try {
+    const res: any = await http.get(`/runtime/instances/${ticket.value.processInstId}/my-task`)
+    myTask.value = res.data || null
+  } catch {
+    myTask.value = null
+  }
+}
+
+/** 重新提交前先把改过的表单落库，否则审批人看到的还是退回前的内容 */
+async function saveBeforeAction() {
+  if (!myTask.value?.resubmitTask || !hasPerm('ticket:update')) return
+  await http.put(`/ticket/tickets/${ticket.value.id}`, {
+    title: ticket.value.title,
+    formData: { ...formData.value },
+  })
+}
+
+async function onActionDone() {
+  await reload()
+}
+
 async function reload() {
   const id = route.params.id as string
   const res: any = await http.get(`/ticket/tickets/${id}`)
@@ -184,7 +229,10 @@ async function reload() {
     } catch {
       timeline.value = { nodes: [] }
     }
+  } else {
+    timeline.value = { nodes: [] }
   }
+  await loadMyTask()
 }
 
 onMounted(async () => {
@@ -217,6 +265,7 @@ onMounted(async () => {
           timeline.value = tl.data || { nodes: [] }
         }),
       )
+      jobs.push(loadMyTask())
     }
     await Promise.allSettled(jobs)
   } finally {
@@ -226,7 +275,8 @@ onMounted(async () => {
 </script>
 <style scoped>
 .head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
-.head-actions { display: flex; gap: 8px; }
+.head-actions { display: flex; gap: 8px; align-items: center; }
+.task-tip { margin-bottom: 16px; }
 .page-title { margin: 0; }
 .page-sub { margin: 4px 0 0; color: #7a8a84; }
 .link { color: var(--el-color-primary); text-decoration: none; }

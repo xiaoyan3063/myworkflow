@@ -65,6 +65,12 @@ public class ProcessRuntimeController {
         return R.ok(runtimeService.taskDetail(taskId));
     }
 
+    @ApiOperation("我在该实例上的待办任务")
+    @GetMapping("/instances/{processInstanceId}/my-task")
+    public R<Map<String, Object>> myTask(@PathVariable String processInstanceId) {
+        return R.ok(runtimeService.myActiveTask(processInstanceId));
+    }
+
     @ApiOperation("同意")
     @PostMapping("/approve")
     public R<Void> approve(@Valid @RequestBody TaskActionRequest req) {

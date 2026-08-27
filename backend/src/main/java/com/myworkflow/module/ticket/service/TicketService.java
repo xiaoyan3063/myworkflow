@@ -442,7 +442,12 @@ public class TicketService {
     @Transactional(rollbackFor = Exception.class)
     public TkTicket updateDraft(Long id, TkTicket req) {
         TkTicket ticket = ticketDetail(id);
-        if (!STATUS_DRAFT.equals(ticket.getStatus()) && !STATUS_REJECTED.equals(ticket.getStatus())) {
+        // 被退回到发起人节点时流程还活着，工单仍是审批中，但持有重提待办的人可以改单
+        boolean resubmitting = STATUS_IN_APPROVAL.equals(ticket.getStatus())
+                && processRuntimeService.hasResubmitTask(ticket.getProcessInstId());
+        if (!STATUS_DRAFT.equals(ticket.getStatus())
+                && !STATUS_REJECTED.equals(ticket.getStatus())
+                && !resubmitting) {
             throw new BizException("审批中或已结束的工单不能改业务字段");
         }
         if (StringUtils.hasText(req.getTitle())) {
@@ -537,6 +542,11 @@ public class TicketService {
         }
         UserContext ctx = UserContext.get();
         Long uid = ctx == null ? null : ctx.getUserId();
+        // 审批人往往不在发起人的数据范围内，但要能打开单据才能审批
+        if (StringUtils.hasText(ticket.getProcessInstId())
+                && processRuntimeService.isInvolved(ticket.getProcessInstId(), uid)) {
+            return;
+        }
         Long starter = ticket.getStarterId();
         if (starter == null) {
             throw new BizException(403, "无权查看或操作该工单");

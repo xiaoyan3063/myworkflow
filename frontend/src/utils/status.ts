@@ -32,3 +32,22 @@ export function ticketStatusText(status?: string) {
 export function ticketStatusTone(status?: string) {
   return TICKET_STATUS[status || '']?.tone || 'info'
 }
+
+/** 站内消息 msgType，库里存英文码，列表显示中文 */
+export const MSG_TYPE: Record<string, { text: string; tone: string }> = {
+  TODO: { text: '待办', tone: 'warning' },
+  CC: { text: '抄送', tone: 'info' },
+  REJECT: { text: '驳回', tone: 'danger' },
+  TRANSFER: { text: '转办', tone: 'info' },
+  COMPLETE: { text: '完成', tone: 'success' },
+  TIMEOUT: { text: '催办', tone: 'danger' },
+}
+
+export function msgTypeText(type?: string) {
+  if (!type) return '-'
+  return MSG_TYPE[type]?.text || type
+}
+
+export function msgTypeTone(type?: string) {
+  return MSG_TYPE[type || '']?.tone || 'info'
+}

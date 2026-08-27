@@ -212,6 +212,7 @@
 - 分页仍是 `PageResult`。
 - 状态用 `TICKET_STATUS`（草稿/审批中/已通过/已驳回），不和流程 `RUNNING` 混用。
 - 行按钮：查看、编辑（仅 DRAFT/REJECTED）、提交、删除草稿。本步全部显示。
+- 人员字段（`user` / `users`）存的是用户 id，列表按 `GET /system/users/by-ids` 批量换成人名再渲染，缓存在 `utils/userNames.ts`。选人下拉的 `/users/simple` 有 50 条上限，已选的人不在里面时同样按 id 补一条选项，避免只读详情露出数字。
 
 ### 配置 JSON 示例
 
@@ -342,6 +343,25 @@ LIMIT 10 OFFSET 0;
 5. 列表/详情同样：草稿不进运行时，发布后列表列才变。
 6. 提交一张没有工单号的单（正常不会发生）应报「提交审批前必须已有工单号」。绑定流程停用后提交应报未发布。
 7. 待办通过/驳回工单状态回写与以前相同。
+
+## 工单详情直接审批（第 8 步）
+
+审批人不用再绕回「我的待办」，工单详情自己判断当前用户在这张单上有没有待办。
+
+| 位置 | 做什么 |
+|------|--------|
+| `GET /runtime/instances/{processInstanceId}/my-task` | 返回当前用户在该实例上的待办 `{taskId, taskName, resubmitTask}`，没有则 `data` 为 null。 |
+| `ProcessRuntimeService.isInvolved` | 处理过或当前待办的人算参与人。`TicketService.assertTicketScope` 放行参与人，否则跨部门审批人连单据都打不开。 |
+| `ProcessRuntimeService.hasResubmitTask` | 被退回到发起人节点时实例还在跑、工单仍是 `IN_APPROVAL`，`updateDraft` 靠它放行改单。 |
+| `components/ApprovalActions.vue` | 同意 / 驳回（回退节点或终止）/ 转办，复用 `/runtime/approve|reject|transfer`，与待办页行为一致。 |
+| `TicketDetailView` | 有待办时顶部出按钮和提示条；重新提交前先 `PUT` 存表单再调 approve；办完刷新工单、轨迹和待办状态。 |
+
+### 验证
+
+1. `zhangsan` 提交一张工单，用经理账号直接打开该工单详情（不走待办）：顶部提示「当前节点【xx】待您审批」，出现同意/驳回/转办。
+2. 点同意，页面就地刷新：按钮消失，轨迹多一节，工单状态按流程推进。
+3. 驳回选「回退到发起人」：发起人打开详情看到黄色提示条，表单可编辑，按钮变成「重新提交」，改完提交后轨迹里是「重新提交」而不是「通过」。
+4. 与本单无关的人打开详情仍按数据范围拦截（403）。
 
 ## PostgreSQL
 

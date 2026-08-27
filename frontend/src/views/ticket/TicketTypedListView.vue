@@ -83,6 +83,7 @@ import http from '@/utils/http'
 import TicketForm from '@/components/ticket/TicketForm.vue'
 import TicketFileLinks from '@/components/ticket/TicketFileLinks.vue'
 import { looksLikeFileIds, normalizeFileIds } from '@/components/ticket/ticketFiles'
+import { loadUserNames, toIds, userNamesOf } from '@/utils/userNames'
 import { TICKET_STATUS, ticketStatusText, ticketStatusTone } from '@/utils/status'
 import { hasPerm } from '@/utils/permission'
 
@@ -119,6 +120,15 @@ const fileFields = computed(
   () => new Set((formSchema.value?.fields || []).filter((f: any) => f.type === 'file').map((f: any) => f.field)),
 )
 
+const userFields = computed(
+  () =>
+    new Set(
+      (formSchema.value?.fields || [])
+        .filter((f: any) => f.type === 'user' || f.type === 'users')
+        .map((f: any) => f.field),
+    ),
+)
+
 /** 字段改过名、旧数据对不上已发布 schema 时，按值的形状兜底认成附件 */
 function isFileCell(row: any, col: any) {
   if (col.from !== 'json') return false
@@ -130,6 +140,7 @@ function cellValue(row: any, col: any) {
   if (col.from === 'json') {
     const v = row.formData?.[col.field]
     if (v === undefined || v === null || v === '') return '-'
+    if (userFields.value.has(col.field)) return userNamesOf(v) || '-'
     return Array.isArray(v) ? v.join('、') : String(v)
   }
   const v = row[mainProp(col.field)]
@@ -180,9 +191,22 @@ async function load() {
     const res: any = await http.get(`/ticket/tickets/by-type/${typeCode.value}`, { params })
     list.value = res.data?.records || []
     total.value = res.data?.total || 0
+    await loadCellUserNames()
   } finally {
     loading.value = false
   }
+}
+
+/** 人员字段单元格拿到的是用户 id，渲染前先把这一页涉及的人名查回来 */
+async function loadCellUserNames() {
+  if (!userFields.value.size) return
+  const ids: string[] = []
+  for (const row of list.value) {
+    for (const field of userFields.value) {
+      ids.push(...toIds(row.formData?.[field as string]))
+    }
+  }
+  await loadUserNames(ids)
 }
 
 async function openEdit(row?: any) {

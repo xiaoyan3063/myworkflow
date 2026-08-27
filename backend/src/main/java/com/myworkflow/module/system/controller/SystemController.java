@@ -223,14 +223,49 @@ public class SystemController {
                 .last("LIMIT 50"));
         List<Map<String, Object>> result = new ArrayList<>();
         for (SysUser u : list) {
-            Map<String, Object> m = new HashMap<>();
-            m.put("id", u.getId());
-            m.put("username", u.getUsername());
-            m.put("realName", u.getRealName());
-            m.put("deptId", u.getDeptId());
-            result.add(m);
+            result.add(toSimpleUser(u));
         }
         return R.ok(result);
+    }
+
+    /**
+     * 表单里的人员字段存的是用户 id，列表和只读详情要按 id 回显人名。
+     * 精简列表有 50 条上限，靠它兜不住，必须能按 id 精确查。
+     */
+    @ApiOperation("按 id 批量查用户（人名回显）")
+    @GetMapping("/users/by-ids")
+    public R<List<Map<String, Object>>> usersByIds(@RequestParam("ids") List<String> ids) {
+        List<Long> numeric = new ArrayList<>();
+        for (String id : ids) {
+            if (!StringUtils.hasText(id)) {
+                continue;
+            }
+            try {
+                numeric.add(Long.valueOf(id.trim()));
+            } catch (NumberFormatException ignored) {
+                // 历史数据里可能存的是用户名之类的非 id，交给前端原样显示
+            }
+        }
+        if (numeric.isEmpty()) {
+            return R.ok(new ArrayList<>());
+        }
+        if (numeric.size() > 200) {
+            numeric = numeric.subList(0, 200);
+        }
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (SysUser u : userMapper.selectBatchIds(numeric)) {
+            result.add(toSimpleUser(u));
+        }
+        return R.ok(result);
+    }
+
+    private Map<String, Object> toSimpleUser(SysUser u) {
+        Map<String, Object> m = new HashMap<>();
+        m.put("id", u.getId());
+        m.put("username", u.getUsername());
+        m.put("realName", u.getRealName());
+        m.put("deptId", u.getDeptId());
+        return m;
     }
 
     private List<Map<String, Object>> buildDeptTree(List<SysDept> all, Long parentId) {
