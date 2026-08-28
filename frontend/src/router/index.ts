@@ -27,6 +27,7 @@ const router = createRouter({
         { path: 'process/design/:id?', name: 'processDesign', component: () => import('@/views/process/ProcessDesignerView.vue'), meta: { title: '流程设计器' } },
         { path: 'forms', name: 'forms', component: () => import('@/views/process/FormListView.vue'), meta: { title: '表单管理' } },
         { path: 'forms/design/:id?', name: 'formDesign', component: () => import('@/views/process/FormDesignerView.vue'), meta: { title: '表单设计器' } },
+        { path: 'approval-roles', name: 'approvalRoles', component: () => import('@/views/process/ApprovalRoleView.vue'), meta: { title: '审批角色' } },
         { path: 'users', name: 'users', component: () => import('@/views/system/UserView.vue'), meta: { title: '用户管理' } },
         { path: 'depts', name: 'depts', component: () => import('@/views/system/DeptView.vue'), meta: { title: '部门管理' } },
         { path: 'roles', name: 'roles', component: () => import('@/views/system/RoleView.vue'), meta: { title: '角色管理' } },

@@ -51,6 +51,15 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public R<Void> handleOther(Exception e) {
+        // Flowable 会包装任务监听器抛出的业务异常；仍需把“下一节点无审批人”等明确提示返回前端。
+        Throwable cause = e;
+        while (cause != null) {
+            if (cause instanceof BizException) {
+                BizException biz = (BizException) cause;
+                return R.fail(biz.getCode(), biz.getMessage());
+            }
+            cause = cause.getCause();
+        }
         log.error("系统异常", e);
         return R.fail("系统繁忙，请稍后重试");
     }

@@ -24,8 +24,14 @@
           :loading="submitting"
           @click="submit"
         >提交审批</el-button>
+        <el-button
+          v-if="canDelete && hasPerm('ticket:delete')"
+          type="danger"
+          plain
+          @click="remove"
+        >删除</el-button>
         <ApprovalActions
-          v-if="myTask"
+          v-if="myTask && dataAccess"
           :task="myTask"
           :before-action="saveBeforeAction"
           @done="onActionDone"
@@ -44,6 +50,14 @@
       :title="myTask.resubmitTask
         ? '该工单已被退回，请修改后重新提交'
         : `当前节点【${myTask.taskName}】待您审批`"
+    />
+    <el-alert
+      v-if="myTask && !dataAccess"
+      class="task-tip"
+      type="error"
+      :closable="false"
+      show-icon
+      :title="fieldAccess.accessMessage || '当前用户角色没有该工单的数据权限，字段已隐藏且不能审批；授权后请刷新页面'"
     />
 
     <el-row v-if="!loading" :gutter="20">
@@ -164,9 +178,14 @@ const isDraftLike = computed(() => ticket.value.status === 'DRAFT' || ticket.val
 // 被退回到发起人节点时工单仍是审批中，但持有重提待办的人要能改表单
 const canEdit = computed(() => isDraftLike.value || !!myTask.value?.resubmitTask)
 const canEditApprovalFields = computed(
-  () => !canEdit.value && Array.isArray(myTask.value?.writableFields) && myTask.value.writableFields.length > 0,
+  () => dataAccess.value && !canEdit.value
+    && Array.isArray(myTask.value?.writableFields) && myTask.value.writableFields.length > 0,
 )
+const dataAccess = computed(() => fieldAccess.value.dataAccess !== false)
 const canSubmit = computed(() => isDraftLike.value)
+const canDelete = computed(
+  () => ticket.value.status === 'DRAFT' || !!myTask.value?.resubmitTask,
+)
 const nodeFields = computed<string[]>(() => myTask.value?.writableFields || [])
 const hiddenFields = computed<string[]>(() => fieldAccess.value.hiddenFields || [])
 
@@ -280,6 +299,18 @@ async function submit() {
   } finally {
     submitting.value = false
   }
+}
+
+async function remove() {
+  const resubmit = !!myTask.value?.resubmitTask
+  await ElMessageBox.confirm(
+    `删除工单「${ticket.value.ticketNo}」？${resubmit ? '关联的审批流程将同时终止。' : ''}`,
+    '确认删除',
+    { type: 'warning' },
+  )
+  await http.delete(`/ticket/tickets/${ticket.value.id}`)
+  ElMessage.success('已删除')
+  goBack()
 }
 
 async function loadMyTask() {

@@ -64,6 +64,7 @@ public class TicketService {
     private final ProcessRuntimeService processRuntimeService;
     private final MenuService menuService;
     private final PermissionService permissionService;
+    private final TicketDataAccessService ticketDataAccessService;
     private final TicketUiService ticketUiService;
     private final TicketFileService ticketFileService;
 
@@ -398,6 +399,7 @@ public class TicketService {
             throw new BizException("工单不存在");
         }
         assertTicketScope(ticket);
+        boolean dataAccess = ticketDataAccessService.hasDataAccess(ticket);
         TkType type = typeMapper.selectById(ticket.getTypeId());
         if (type != null) {
             ticket.setTypeName(type.getTypeName());
@@ -409,6 +411,10 @@ public class TicketService {
                     Collections.singletonList(ticket.getProcessInstId()));
             ticket.setCurrentApprover(approvers.get(ticket.getProcessInstId()));
         }
+        if (!dataAccess) {
+            // 当前办理人可以进入审批页，但业务字段必须由服务端清空，不能只在前端遮挡。
+            ticket.setFormData(new HashMap<>());
+        }
         return ticket;
     }
 
@@ -419,6 +425,13 @@ public class TicketService {
     public Map<String, Object> fieldAccess(Long id) {
         TkTicket ticket = ticketDetail(id);
         Map<String, Object> result = new HashMap<>();
+        TkTicket stored = ticketMapper.selectById(id);
+        boolean dataAccess = ticketDataAccessService.hasDataAccess(stored);
+        result.put("dataAccess", dataAccess);
+        if (!dataAccess) {
+            result.put("accessMessage",
+                    "您是当前审批人，但用户角色的数据权限不包含该工单，字段已隐藏且暂不能办理；授权后请刷新页面");
+        }
         if (!StringUtils.hasText(ticket.getProcessInstId())) {
             List<String> nodeFields = typeNodeFields(ticket.getTypeId());
             result.put("nodeFields", nodeFields);
@@ -518,6 +531,10 @@ public class TicketService {
      */
     @Transactional(rollbackFor = Exception.class)
     public TkTicket saveApprovalFields(Long id, Map<String, Object> submitted) {
+        TkTicket stored = ticketMapper.selectById(id);
+        if (!ticketDataAccessService.hasDataAccess(stored)) {
+            throw ticketDataAccessService.denied();
+        }
         TkTicket ticket = ticketDetail(id);
         if (!STATUS_IN_APPROVAL.equals(ticket.getStatus()) || !StringUtils.hasText(ticket.getProcessInstId())) {
             throw new BizException("仅审批中的工单可保存节点填写数据");
@@ -554,10 +571,19 @@ public class TicketService {
         return ticketDetail(id);
     }
 
+    @Transactional(rollbackFor = Exception.class)
     public void deleteDraft(Long id) {
         TkTicket ticket = ticketDetail(id);
-        if (!STATUS_DRAFT.equals(ticket.getStatus())) {
-            throw new BizException("仅草稿可删除");
+        boolean draft = STATUS_DRAFT.equals(ticket.getStatus());
+        boolean resubmit = STATUS_IN_APPROVAL.equals(ticket.getStatus())
+                && UserContext.currentUserId() != null
+                && UserContext.currentUserId().equals(ticket.getStarterId())
+                && processRuntimeService.hasResubmitTask(ticket.getProcessInstId());
+        if (!draft && !resubmit) {
+            throw new BizException("仅草稿或等待发起人重新提交的工单可删除");
+        }
+        if (resubmit) {
+            processRuntimeService.cancelForTicketDeletion(ticket.getProcessInstId());
         }
         ticketMapper.deleteById(id);
     }

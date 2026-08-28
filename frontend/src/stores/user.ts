@@ -30,7 +30,8 @@ export const useUserStore = defineStore('user', () => {
 
   function canAccess(path: string) {
     if (profile.value?.admin) return true
-    const always = ['/dashboard', '/messages']
+    // 审批中心个人视图是所有登录用户均可访问的弱菜单，不代表拥有工单数据权限。
+    const always = ['/dashboard', '/messages', '/todo', '/done', '/started', '/cc']
     if (always.some((p) => path === p || path.startsWith(p + '/'))) return true
     if (path.startsWith('/task/') || path.startsWith('/instance/')) return true
     const paths: string[] = []

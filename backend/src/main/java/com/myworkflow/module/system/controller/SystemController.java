@@ -3,6 +3,7 @@ package com.myworkflow.module.system.controller;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.myworkflow.common.exception.BizException;
+import com.myworkflow.common.context.UserContext;
 import com.myworkflow.common.result.PageResult;
 import com.myworkflow.common.result.R;
 import com.myworkflow.module.system.entity.SysDept;
@@ -114,7 +115,9 @@ public class SystemController {
     @ApiOperation("部门树")
     @GetMapping("/depts/tree")
     public R<List<Map<String, Object>>> deptTree() {
-        List<SysDept> all = deptMapper.selectList(new LambdaQueryWrapper<SysDept>().orderByAsc(SysDept::getSortNo));
+        List<SysDept> all = deptMapper.selectList(new LambdaQueryWrapper<SysDept>()
+                .eq(SysDept::getTenantId, UserContext.currentTenantId())
+                .orderByAsc(SysDept::getSortNo));
         return R.ok(buildDeptTree(all, 0L));
     }
 
@@ -216,6 +219,7 @@ public class SystemController {
     @GetMapping("/users/simple")
     public R<List<Map<String, Object>>> simpleUsers(@RequestParam(required = false) String keyword) {
         List<SysUser> list = userMapper.selectList(new LambdaQueryWrapper<SysUser>()
+                .eq(SysUser::getTenantId, UserContext.currentTenantId())
                 .eq(SysUser::getStatus, 1)
                 .and(StringUtils.hasText(keyword), w -> w
                         .like(SysUser::getUsername, keyword)

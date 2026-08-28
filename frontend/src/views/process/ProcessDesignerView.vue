@@ -68,7 +68,7 @@
           <template v-if="isUserTask">
             <el-form-item label="审批人来源">
               <el-select v-model="nodeForm.assigneeType" style="width: 100%" @change="onAssigneeTypeChange">
-                <el-option label="按角色（推荐）" value="role" />
+                <el-option label="按审批角色（推荐）" value="approvalRole" />
                 <el-option label="指定用户" value="user" />
                 <el-option label="按部门" value="dept" />
                 <el-option label="发起人本人" value="starter" />
@@ -76,7 +76,7 @@
               </el-select>
             </el-form-item>
 
-            <el-form-item v-if="nodeForm.assigneeType === 'role'" label="选择角色">
+            <el-form-item v-if="nodeForm.assigneeType === 'approvalRole'" label="选择审批角色">
               <el-select
                 v-model="assigneeList"
                 multiple
@@ -84,7 +84,7 @@
                 collapse-tags
                 collapse-tags-tooltip
                 style="width: 100%"
-                placeholder="角色下所有启用用户都会收到待办"
+                placeholder="先选择审批角色，再按部门范围过滤成员"
                 @change="applyTask"
               >
                 <el-option
@@ -95,6 +95,33 @@
                 />
               </el-select>
             </el-form-item>
+
+            <template v-if="nodeForm.assigneeType === 'approvalRole'">
+              <el-form-item label="部门过滤">
+                <el-select v-model="nodeForm.deptScope" style="width: 100%" @change="onDeptScopeChange">
+                  <el-option label="发起人同部门" value="SAME_DEPT" />
+                  <el-option label="发起人上级所有部门" value="PARENT_DEPTS" />
+                  <el-option label="发起人同部门及上级所有部门" value="SAME_AND_PARENT" />
+                  <el-option label="指定部门" value="FIXED_DEPT" />
+                </el-select>
+              </el-form-item>
+              <el-form-item v-if="nodeForm.deptScope === 'FIXED_DEPT'" label="指定部门">
+                <el-tree-select
+                  v-model="fixedDeptList"
+                  :data="deptTree"
+                  multiple
+                  filterable
+                  check-strictly
+                  collapse-tags
+                  collapse-tags-tooltip
+                  node-key="value"
+                  :render-after-expand="false"
+                  style="width: 100%"
+                  placeholder="选择该节点固定分派的一个或多个部门"
+                  @change="applyTask"
+                />
+              </el-form-item>
+            </template>
 
             <el-form-item v-else-if="nodeForm.assigneeType === 'user'" label="选择审批人">
               <el-select
@@ -552,8 +579,10 @@ const branches = ref<any[]>([])
 const meta = reactive<any>({ id: null, processName: '', processKey: '', formId: null, ticketTypeId: null, description: '' })
 const nodeForm = reactive({
   name: '',
-  assigneeType: 'role',
+  assigneeType: 'approvalRole',
   assigneeValue: '',
+  deptScope: 'SAME_DEPT',
+  fixedDeptId: '',
   multiMode: 'or',
   dueHours: 0,
   writableFields: [] as string[],
@@ -607,6 +636,13 @@ const assigneeList = computed<string[]>({
   },
 })
 
+const fixedDeptList = computed<string[]>({
+  get: () => (nodeForm.fixedDeptId ? nodeForm.fixedDeptId.split(',').filter(Boolean) : []),
+  set: (val) => {
+    nodeForm.fixedDeptId = (val || []).join(',')
+  },
+})
+
 const assigneeFormFields = computed(() =>
   [...formFields.value].sort((a, b) => {
     const aUser = a.type === 'user' || a.type === 'users' ? 0 : 1
@@ -624,8 +660,21 @@ const taskSummary = computed(() => {
   const who = describeAssignee(nodeForm.assigneeType, nodeForm.assigneeValue)
   const mode = nodeForm.multiMode === 'and' ? '会签' : '或签'
   const due = nodeForm.dueHours > 0 ? `，超过 ${nodeForm.dueHours} 小时催办` : ''
-  return `当前：${who}（${mode}）${due}`
+  const scope = nodeForm.assigneeType === 'approvalRole' ? `，${deptScopeText(nodeForm.deptScope)}` : ''
+  return `当前：${who}（${mode}${scope}）${due}`
 })
+
+function deptScopeText(scope: string) {
+  if (scope === 'SAME_DEPT') return '发起人同部门'
+  if (scope === 'PARENT_DEPTS') return '发起人上级所有部门'
+  if (scope === 'SAME_AND_PARENT') return '发起人同部门及上级所有部门'
+  if (scope === 'FIXED_DEPT') {
+    const names = nodeForm.fixedDeptId.split(',').filter(Boolean)
+      .map((id) => findDept(deptTree.value, id) || id)
+    return `指定部门：${names.join('、') || '未选择'}`
+  }
+  return '不限部门'
+}
 
 function describeAssignee(type: string, value: string) {
   if (type === 'starter') return '发起人本人'
@@ -636,12 +685,12 @@ function describeAssignee(type: string, value: string) {
   const parts = (value || '').split(',').filter(Boolean)
   if (!parts.length) return '未配置'
   const names = parts.map((v) => {
-    if (type === 'role') return roles.value.find((r) => r.roleCode === v)?.roleName || v
+    if (type === 'approvalRole' || type === 'role') return roles.value.find((r) => r.roleCode === v)?.roleName || v
     if (type === 'user') return users.value.find((u) => String(u.id) === v)?.realName || v
     if (type === 'dept') return findDept(deptTree.value, v) || v
     return v
   })
-  const prefix = type === 'role' ? '角色' : type === 'dept' ? '部门' : ''
+  const prefix = type === 'approvalRole' || type === 'role' ? '角色' : type === 'dept' ? '部门' : ''
   return prefix + names.join('、')
 }
 
@@ -688,7 +737,7 @@ onMounted(async () => {
     http.get('/process/forms', { params: { page: 1, size: 100 } }),
     http.get('/ticket/types/enabled').catch(() => ({ data: [] })),
     http.get('/system/users/simple'),
-    http.get('/system/roles'),
+    http.get('/process/approval-roles', { params: { enabledOnly: true } }),
     http.get('/system/depts/tree'),
   ])
   forms.value = formRes.data?.records || []
@@ -836,8 +885,10 @@ function applySelection(element: any) {
   const bo = element.businessObject || {}
   nodeForm.name = bo.name || ''
   const cfg = readConfig(bo)
-  nodeForm.assigneeType = cfg.assigneeType || 'role'
+  nodeForm.assigneeType = cfg.assigneeType || 'approvalRole'
   nodeForm.assigneeValue = cfg.assigneeValue || ''
+  nodeForm.deptScope = cfg.deptScope || (cfg.assigneeType ? 'ALL' : 'SAME_DEPT')
+  nodeForm.fixedDeptId = cfg.fixedDeptId ? String(cfg.fixedDeptId) : ''
   nodeForm.multiMode = cfg.multiMode || 'or'
   nodeForm.dueHours = cfg.dueHours || 0
   nodeForm.writableFields = Array.isArray(cfg.writableFields) ? cfg.writableFields : []
@@ -895,6 +946,15 @@ function parseCondition(body: string) {
 function onAssigneeTypeChange() {
   // 不同来源的取值含义不同（角色编码 / 用户ID / 部门ID），切换时清空避免串用
   nodeForm.assigneeValue = ''
+  nodeForm.deptScope = nodeForm.assigneeType === 'approvalRole' ? 'SAME_DEPT' : 'ALL'
+  nodeForm.fixedDeptId = ''
+  applyTask()
+}
+
+function onDeptScopeChange() {
+  if (nodeForm.deptScope !== 'FIXED_DEPT') {
+    nodeForm.fixedDeptId = ''
+  }
   applyTask()
 }
 
@@ -927,6 +987,8 @@ function applyTask() {
     const cfg = {
       assigneeType: nodeForm.assigneeType,
       assigneeValue: nodeForm.assigneeType === 'starter' ? '' : nodeForm.assigneeValue,
+      deptScope: nodeForm.assigneeType === 'approvalRole' ? nodeForm.deptScope : 'ALL',
+      fixedDeptId: nodeForm.assigneeType === 'approvalRole' ? nodeForm.fixedDeptId : '',
       multiMode: nodeForm.multiMode,
       dueHours: nodeForm.dueHours,
       writableFields: nodeForm.writableFields,
@@ -1094,6 +1156,25 @@ function validate(): string[] {
       const cfg = readConfig(el.businessObject)
       if (cfg.assigneeType !== 'starter' && !cfg.assigneeValue) {
         problems.push(`审批节点「${el.businessObject.name || el.id}」还没有配置审批人`)
+      }
+      if (cfg.assigneeType === 'role') {
+        problems.push(`审批节点「${el.businessObject.name || el.id}」仍引用旧用户角色，请重新选择审批角色和部门过滤方式`)
+      }
+      if (cfg.assigneeType === 'approvalRole'
+          && !['SAME_DEPT', 'PARENT_DEPTS', 'SAME_AND_PARENT', 'FIXED_DEPT'].includes(cfg.deptScope)) {
+        problems.push(`审批节点「${el.businessObject.name || el.id}」还没有选择部门过滤方式`)
+      }
+      if (cfg.assigneeType === 'approvalRole') {
+        const missingRoles = String(cfg.assigneeValue || '').split(',').filter(Boolean)
+          .filter((code) => !roles.value.some((role) => role.roleCode === code))
+        if (missingRoles.length) {
+          problems.push(`审批节点「${el.businessObject.name || el.id}」引用的审批角色不存在或已停用：${missingRoles.join('、')}`)
+        }
+      }
+      if (cfg.assigneeType === 'approvalRole'
+          && cfg.deptScope === 'FIXED_DEPT'
+          && !cfg.fixedDeptId) {
+        problems.push(`审批节点「${el.businessObject.name || el.id}」选择了指定部门，但还没有选择部门`)
       }
       if (cfg.assigneeType === 'formField') {
         if (!hasBindSource.value) {

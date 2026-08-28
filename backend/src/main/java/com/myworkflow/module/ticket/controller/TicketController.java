@@ -79,7 +79,7 @@ public class TicketController {
         return R.ok(ticketService.saveApprovalFields(id, formData));
     }
 
-    @ApiOperation("删除草稿")
+    @ApiOperation("删除草稿或等待发起人重新提交的工单")
     @RequiresPerm("ticket:delete")
     @DeleteMapping("/{id}")
     public R<Void> delete(@PathVariable Long id) {

@@ -164,7 +164,30 @@ public class PermissionService {
                     .orderByAsc(SysMenu::getSortNo)
                     .orderByAsc(SysMenu::getId));
         }
-        return userId == null ? Collections.<SysMenu>emptyList() : menuMapper.selectByUserId(userId);
+        List<SysMenu> menus = userId == null
+                ? new ArrayList<>()
+                : new ArrayList<>(menuMapper.selectByUserId(userId));
+        // 审批中心四个个人视图是所有登录用户都有的弱菜单，不授予任何业务数据权限。
+        appendMenuIfAbsent(menus, 10L);
+        appendMenuIfAbsent(menus, 11L);
+        appendMenuIfAbsent(menus, 12L);
+        appendMenuIfAbsent(menus, 13L);
+        appendMenuIfAbsent(menus, 14L);
+        menus.sort(java.util.Comparator.comparing(SysMenu::getSortNo,
+                java.util.Comparator.nullsLast(Integer::compareTo)).thenComparing(SysMenu::getId));
+        return menus;
+    }
+
+    private void appendMenuIfAbsent(List<SysMenu> menus, Long menuId) {
+        for (SysMenu menu : menus) {
+            if (menuId.equals(menu.getId())) {
+                return;
+            }
+        }
+        SysMenu menu = menuMapper.selectById(menuId);
+        if (menu != null && (menu.getStatus() == null || menu.getStatus() == 1)) {
+            menus.add(menu);
+        }
     }
 
     public List<SysMenu> sidebarTree(Long userId, boolean admin) {

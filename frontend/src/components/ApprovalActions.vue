@@ -1,14 +1,15 @@
 <template>
   <span class="approval-actions">
     <el-button type="success" :loading="acting" @click="openApprove">
-      {{ task.resubmitTask ? '重新提交' : '同意' }}
+      {{ task.resubmitTask ? '重新提交' : task.addSignTask ? '完成加签' : '同意' }}
     </el-button>
-    <template v-if="!task.resubmitTask">
+    <template v-if="!task.resubmitTask && !task.addSignTask">
       <el-button type="danger" @click="openReject">驳回</el-button>
       <el-button @click="openTransfer">转办</el-button>
+      <el-button @click="openAddSign">加签</el-button>
     </template>
 
-    <el-dialog v-model="approveVisible" :title="task.resubmitTask ? '重新提交' : '同意'" width="520px">
+    <el-dialog v-model="approveVisible" :title="task.resubmitTask ? '重新提交' : task.addSignTask ? '完成加签' : '同意'" width="520px">
       <el-form label-width="80px">
         <el-form-item label="节点">
           <span class="node-name">{{ task.taskName }}</span>
@@ -16,7 +17,7 @@
         <el-form-item :label="task.resubmitTask ? '提交说明' : '审批意见'">
           <el-input v-model="comment" type="textarea" :rows="3" placeholder="选填" />
         </el-form-item>
-        <el-form-item v-if="!task.resubmitTask" label="抄送">
+        <el-form-item v-if="!task.resubmitTask && !task.addSignTask" label="抄送">
           <el-select
             v-model="ccUserIds"
             multiple
@@ -33,6 +34,39 @@
       <template #footer>
         <el-button @click="approveVisible = false">取消</el-button>
         <el-button type="success" :loading="acting" @click="approve">确定</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="addSignVisible" title="前加签" width="460px">
+      <el-form label-width="90px">
+        <el-form-item label="加签人" required>
+          <el-select
+            v-model="addSignUserIds"
+            multiple
+            filterable
+            remote
+            collapse-tags
+            collapse-tags-tooltip
+            :remote-method="searchUsers"
+            placeholder="选择一个或多个加签人"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="u in users"
+              :key="u.id"
+              :label="`${u.realName || u.username}（${u.username}）`"
+              :value="String(u.id)"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="加签说明">
+          <el-input v-model="comment" type="textarea" :rows="3" placeholder="选填" />
+        </el-form-item>
+        <div class="hint">加签期间原审批任务暂停；所有加签人完成后，任务自动返回当前审批人。</div>
+      </el-form>
+      <template #footer>
+        <el-button @click="addSignVisible = false">取消</el-button>
+        <el-button type="primary" :loading="acting" @click="addSign">确定加签</el-button>
       </template>
     </el-dialog>
 
@@ -104,11 +138,11 @@ import { ElMessage } from 'element-plus'
 import http from '@/utils/http'
 
 const props = defineProps<{
-  task: { taskId: string; taskName?: string; resubmitTask?: boolean }
+  task: { taskId: string; taskName?: string; resubmitTask?: boolean; addSignTask?: boolean }
   /** 办理前的钩子，工单详情用它先把表单存下来；抛异常则中断办理 */
   beforeAction?: () => Promise<void> | void
 }>()
-const emit = defineEmits<{ (e: 'done', action: 'approve' | 'reject' | 'transfer'): void }>()
+const emit = defineEmits<{ (e: 'done', action: 'approve' | 'reject' | 'transfer' | 'addSign'): void }>()
 
 const acting = ref(false)
 const comment = ref('')
@@ -117,7 +151,9 @@ const ccUserIds = ref<number[]>([])
 const approveVisible = ref(false)
 const rejectVisible = ref(false)
 const transferVisible = ref(false)
+const addSignVisible = ref(false)
 const transferUserId = ref('')
+const addSignUserIds = ref<string[]>([])
 const rejectMode = ref<'ACTIVITY' | 'TERMINATE'>('ACTIVITY')
 const rejectToActivityId = ref('')
 const rejectTargets = ref<any[]>([])
@@ -125,7 +161,10 @@ const targetsLoading = ref(false)
 
 async function searchUsers(q: string) {
   const res: any = await http.get('/system/users/simple', { params: { keyword: q } })
-  users.value = res.data || []
+  const merged = [...users.value, ...(res.data || [])]
+  users.value = merged.filter(
+    (user, index) => merged.findIndex((item) => String(item.id) === String(user.id)) === index,
+  )
 }
 
 function openApprove() {
@@ -215,6 +254,35 @@ async function transfer() {
     ElMessage.success('已转办')
     transferVisible.value = false
     emit('done', 'transfer')
+  } finally {
+    acting.value = false
+  }
+}
+
+function openAddSign() {
+  comment.value = ''
+  addSignUserIds.value = []
+  addSignVisible.value = true
+  searchUsers('')
+}
+
+async function addSign() {
+  if (!addSignUserIds.value.length) return ElMessage.warning('请选择加签人')
+  acting.value = true
+  try {
+    try {
+      await props.beforeAction?.()
+    } catch {
+      return
+    }
+    await http.post('/runtime/add-sign', {
+      taskId: props.task.taskId,
+      addSignUserIds: addSignUserIds.value,
+      comment: comment.value,
+    })
+    ElMessage.success('加签任务已发送')
+    addSignVisible.value = false
+    emit('done', 'addSign')
   } finally {
     acting.value = false
   }

@@ -19,6 +19,14 @@
         </el-descriptions>
 
         <el-divider>表单数据</el-divider>
+        <el-alert
+          v-if="detail.dataAccess === false"
+          type="error"
+          :closable="false"
+          show-icon
+          :title="detail.accessMessage || '当前用户角色没有该工单的数据权限，字段已隐藏；授权后请刷新页面'"
+          style="margin-bottom: 16px"
+        />
         <el-descriptions v-if="fields.length" :column="1" border>
           <el-descriptions-item v-for="f in fields" :key="f.field" :label="f.title || f.field">
             {{ display(f) }}

@@ -3,6 +3,7 @@ package com.myworkflow.module.ticket.controller;
 import com.myworkflow.common.result.R;
 import com.myworkflow.module.ticket.entity.TkTicketFile;
 import com.myworkflow.module.ticket.service.TicketFileService;
+import com.myworkflow.module.ticket.service.TicketDataAccessService;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import lombok.RequiredArgsConstructor;
@@ -21,18 +22,22 @@ import java.util.List;
 public class TicketFileController {
 
     private final TicketFileService ticketFileService;
+    private final TicketDataAccessService ticketDataAccessService;
 
     @ApiOperation("上传附件，表单 file 字段存返回的 id 列表")
     @PostMapping
     public R<TkTicketFile> upload(@RequestParam("file") MultipartFile file,
                                   @RequestParam(required = false) Long ticketId) {
+        ticketDataAccessService.assertTicketDataAccess(ticketId);
         return R.ok(ticketFileService.upload(file, ticketId));
     }
 
     @ApiOperation("附件元数据")
     @GetMapping("/{id}/info")
     public R<TkTicketFile> info(@PathVariable Long id) {
-        return R.ok(ticketFileService.info(id));
+        TkTicketFile file = ticketFileService.info(id);
+        ticketDataAccessService.assertTicketDataAccess(file.getTicketId());
+        return R.ok(file);
     }
 
     @ApiOperation("批量元数据")
@@ -47,12 +52,18 @@ public class TicketFileController {
                 list.add(Long.valueOf(p.trim()));
             }
         }
-        return R.ok(ticketFileService.infos(list));
+        List<TkTicketFile> files = ticketFileService.infos(list);
+        for (TkTicketFile file : files) {
+            ticketDataAccessService.assertTicketDataAccess(file.getTicketId());
+        }
+        return R.ok(files);
     }
 
     @ApiOperation("下载附件")
     @GetMapping("/{id}")
     public ResponseEntity<Resource> download(@PathVariable Long id) {
+        TkTicketFile file = ticketFileService.info(id);
+        ticketDataAccessService.assertTicketDataAccess(file.getTicketId());
         return ticketFileService.download(id);
     }
 }

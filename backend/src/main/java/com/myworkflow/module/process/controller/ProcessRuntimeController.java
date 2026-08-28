@@ -98,6 +98,13 @@ public class ProcessRuntimeController {
         return R.ok();
     }
 
+    @ApiOperation("前加签")
+    @PostMapping("/add-sign")
+    public R<Void> addSign(@Valid @RequestBody TaskActionRequest req) {
+        runtimeService.addSign(req);
+        return R.ok();
+    }
+
     @ApiOperation("流程实例详情")
     @GetMapping("/instances/{processInstanceId}")
     public R<Map<String, Object>> instanceDetail(@PathVariable String processInstanceId) {

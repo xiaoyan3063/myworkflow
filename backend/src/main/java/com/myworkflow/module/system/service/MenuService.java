@@ -174,7 +174,9 @@ public class MenuService {
             seed();
         }
         ensureTicketDir();
+        ensureDeleteTicketMenu();
         ensureSystemLogMenu();
+        ensureApprovalRoleMenu();
         syncAllTypeMenus();
         grantAllToAdminIfEmpty();
         ensureSalesRole();
@@ -183,6 +185,14 @@ public class MenuService {
     private void ensureTicketDir() {
         if (menuMapper.selectById(TICKET_DIR_ID) == null) {
             insert(TICKET_DIR_ID, 0L, "DIR", "工单", null, "Document", null, 30);
+        }
+    }
+
+    private void ensureDeleteTicketMenu() {
+        SysMenu menu = menuMapper.selectById(36L);
+        if (menu != null && !"删除工单".equals(menu.getMenuName())) {
+            menu.setMenuName("删除工单");
+            menuMapper.updateById(menu);
         }
     }
 
@@ -196,6 +206,13 @@ public class MenuService {
             insert(46L, 40L, "MENU", "系统日志", "/system-logs", "Document", "sys:log", 5);
         }
         grantToAdmin(46L);
+    }
+
+    private void ensureApprovalRoleMenu() {
+        if (menuMapper.selectById(23L) == null) {
+            insert(23L, 20L, "MENU", "审批角色", "/approval-roles", null, "process:manage", 3);
+        }
+        grantToAdmin(23L);
     }
 
     private void grantToAdmin(Long menuId) {
@@ -277,13 +294,14 @@ public class MenuService {
         insert(20L, 0L, "DIR", "流程设计", null, "SetUp", "process:manage", 20);
         insert(21L, 20L, "MENU", "流程管理", "/process", null, "process:manage", 1);
         insert(22L, 20L, "MENU", "表单管理", "/forms", null, "process:manage", 2);
+        insert(23L, 20L, "MENU", "审批角色", "/approval-roles", null, "process:manage", 3);
         insert(TICKET_DIR_ID, 0L, "DIR", "工单", null, "Document", null, 30);
         insert(31L, TICKET_DIR_ID, "MENU", "工单类型", "/ticket-types", null, "ticket:type", 1);
         insert(32L, TICKET_DIR_ID, "MENU", "工单总表", "/tickets", null, "ticket:list", 2);
         insert(33L, TICKET_DIR_ID, "BUTTON", "新建工单", null, null, "ticket:create", 81);
         insert(34L, TICKET_DIR_ID, "BUTTON", "编辑工单", null, null, "ticket:update", 82);
         insert(35L, TICKET_DIR_ID, "BUTTON", "提交审批", null, null, "ticket:submit", 83);
-        insert(36L, TICKET_DIR_ID, "BUTTON", "删除草稿", null, null, "ticket:delete", 84);
+        insert(36L, TICKET_DIR_ID, "BUTTON", "删除工单", null, null, "ticket:delete", 84);
         insert(37L, TICKET_DIR_ID, "BUTTON", "保存类型/设计", null, null, "ticket:type:save", 85);
         insert(38L, TICKET_DIR_ID, "BUTTON", "删除类型", null, null, "ticket:type:delete", 86);
         insert(40L, 0L, "DIR", "系统管理", null, "OfficeBuilding", null, 40);

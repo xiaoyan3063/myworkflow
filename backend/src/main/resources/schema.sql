@@ -129,6 +129,36 @@ CREATE TABLE IF NOT EXISTS sys_user_role (
     tenant_id       BIGINT DEFAULT 0
 );
 
+-- 审批角色只用于流程办理人解析，不承载菜单和数据权限
+CREATE TABLE IF NOT EXISTS wf_approval_role (
+    id              BIGINT PRIMARY KEY,
+    tenant_id       BIGINT DEFAULT 0,
+    role_code       VARCHAR(64) NOT NULL,
+    role_name       VARCHAR(128) NOT NULL,
+    sort_no         INT DEFAULT 0,
+    status          INT DEFAULT 1,
+    remark          VARCHAR(512),
+    create_time     TIMESTAMP,
+    update_time     TIMESTAMP,
+    create_by       BIGINT,
+    update_by       BIGINT,
+    deleted         INT DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS wf_approval_role_user (
+    id              BIGINT PRIMARY KEY,
+    tenant_id       BIGINT DEFAULT 0,
+    role_id         BIGINT NOT NULL,
+    user_id         BIGINT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_approval_role_tenant_code
+    ON wf_approval_role (tenant_id, role_code);
+CREATE UNIQUE INDEX IF NOT EXISTS uk_approval_role_user
+    ON wf_approval_role_user (tenant_id, role_id, user_id);
+CREATE INDEX IF NOT EXISTS idx_approval_role_user_user
+    ON wf_approval_role_user (tenant_id, user_id);
+
 CREATE TABLE IF NOT EXISTS sys_menu (
     id              BIGINT PRIMARY KEY,
     tenant_id       BIGINT DEFAULT 0,

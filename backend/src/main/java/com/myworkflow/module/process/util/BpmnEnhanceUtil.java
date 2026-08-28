@@ -292,6 +292,8 @@ public final class BpmnEnhanceUtil {
     private static void enhanceTask(Document doc, Element task) {
         String assigneeType = "user";
         String assigneeValue = "";
+        String deptScope = "ALL";
+        String fixedDeptId = "";
         String multiMode = "or";
         int dueHours = 0;
 
@@ -300,6 +302,8 @@ public final class BpmnEnhanceUtil {
             JSONObject obj = JSONUtil.parseObj(config.getTextContent());
             assigneeType = obj.getStr("assigneeType", "user");
             assigneeValue = obj.getStr("assigneeValue", "");
+            deptScope = obj.getStr("deptScope", "ALL");
+            fixedDeptId = obj.getStr("fixedDeptId", "");
             multiMode = obj.getStr("multiMode", "or");
             dueHours = obj.getInt("dueHours", 0);
             // 审批人配置已翻译成监听器，不必带进 Flowable；但节点可填字段要留在部署版本里，
@@ -325,9 +329,9 @@ public final class BpmnEnhanceUtil {
             task.setAttribute("flowable:dueDate", "PT" + dueHours + "H");
         }
         if ("and".equals(multiMode)) {
-            appendMultiInstance(doc, task, assigneeType, assigneeValue);
+            appendMultiInstance(doc, task, assigneeType, assigneeValue, deptScope, fixedDeptId);
         }
-        writeAssigneeListener(doc, task, assigneeType, assigneeValue);
+        writeAssigneeListener(doc, task, assigneeType, assigneeValue, deptScope, fixedDeptId);
     }
 
     /** 任务自己声明了审批人（候选人属性或任务监听器）就算有配置 */
@@ -347,7 +351,8 @@ public final class BpmnEnhanceUtil {
         return false;
     }
 
-    private static void writeAssigneeListener(Document doc, Element task, String assigneeType, String assigneeValue) {
+    private static void writeAssigneeListener(Document doc, Element task, String assigneeType,
+                                              String assigneeValue, String deptScope, String fixedDeptId) {
         Element ext = findOrCreateExtension(doc, task);
         removeOwnListener(ext);
 
@@ -356,6 +361,8 @@ public final class BpmnEnhanceUtil {
         listener.setAttribute("delegateExpression", ASSIGNEE_LISTENER);
         listener.appendChild(field(doc, "assigneeType", assigneeType));
         listener.appendChild(field(doc, "assigneeValue", assigneeValue));
+        listener.appendChild(field(doc, "deptScope", deptScope));
+        listener.appendChild(field(doc, "fixedDeptId", fixedDeptId));
         ext.appendChild(listener);
     }
 
@@ -382,14 +389,16 @@ public final class BpmnEnhanceUtil {
      * 会签：转为并行多实例，集合由 AssigneeResolveService 在运行时解析，
      * 每个实例的审批人通过 elementVariable=assignee 注入。
      */
-    private static void appendMultiInstance(Document doc, Element task, String assigneeType, String assigneeValue) {
+    private static void appendMultiInstance(Document doc, Element task, String assigneeType,
+                                            String assigneeValue, String deptScope, String fixedDeptId) {
         if (firstChild(task, "multiInstanceLoopCharacteristics") != null) {
             return;
         }
         Element loop = doc.createElementNS(BPMN_NS, "multiInstanceLoopCharacteristics");
         loop.setAttribute("isSequential", "false");
         loop.setAttribute("flowable:collection", "${assigneeResolveService.collect(execution,'"
-                + escape(assigneeType) + "','" + escape(assigneeValue) + "')}");
+                + escape(assigneeType) + "','" + escape(assigneeValue) + "','"
+                + escape(deptScope) + "','" + escape(fixedDeptId) + "')}");
         loop.setAttribute("flowable:elementVariable", "assignee");
 
         Element completion = doc.createElementNS(BPMN_NS, "completionCondition");

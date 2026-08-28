@@ -11,6 +11,14 @@
           <el-descriptions-item label="实例ID">{{ detail.processInstanceId }}</el-descriptions-item>
         </el-descriptions>
         <el-divider>表单数据</el-divider>
+        <el-alert
+          v-if="detail.dataAccess === false"
+          type="error"
+          :closable="false"
+          show-icon
+          :title="detail.accessMessage || '当前用户角色没有该工单的数据权限，字段已隐藏且不能审批；授权后请刷新页面'"
+          style="margin-bottom: 16px"
+        />
         <el-form v-if="detail.resubmitTask" label-width="100px" class="resubmit-form">
           <el-alert
             title="该申请已被驳回，请修改表单后重新提交"
@@ -45,20 +53,21 @@
         <pre v-else class="form-box">{{ prettyForm }}</pre>
         <el-form label-width="80px" style="margin-top: 16px">
           <el-form-item :label="detail.resubmitTask ? '提交说明' : '意见'">
-            <el-input v-model="comment" type="textarea" :rows="3" placeholder="请输入审批意见" />
+            <el-input v-model="comment" type="textarea" :rows="3" :disabled="detail.dataAccess === false" placeholder="请输入审批意见" />
           </el-form-item>
-          <el-form-item v-if="!detail.resubmitTask" label="抄送">
+          <el-form-item v-if="!detail.resubmitTask && !detail.addSignTask" label="抄送">
             <el-select v-model="ccUserIds" multiple filterable remote :remote-method="searchUsers" placeholder="选择抄送人" style="width: 100%">
               <el-option v-for="u in users" :key="u.id" :label="`${u.realName} (${u.username})`" :value="u.id" />
             </el-select>
           </el-form-item>
           <el-form-item>
-            <el-button type="primary" @click="approve">
-              {{ detail.resubmitTask ? '重新提交' : '同意' }}
+            <el-button type="primary" :disabled="detail.dataAccess === false" @click="approve">
+              {{ detail.resubmitTask ? '重新提交' : detail.addSignTask ? '完成加签' : '同意' }}
             </el-button>
-            <template v-if="!detail.resubmitTask">
-              <el-button type="danger" @click="openReject">驳回</el-button>
-              <el-button @click="openTransfer">转办</el-button>
+            <template v-if="!detail.resubmitTask && !detail.addSignTask">
+              <el-button type="danger" :disabled="detail.dataAccess === false" @click="openReject">驳回</el-button>
+              <el-button :disabled="detail.dataAccess === false" @click="openTransfer">转办</el-button>
+              <el-button :disabled="detail.dataAccess === false" @click="openAddSign">加签</el-button>
             </template>
           </el-form-item>
         </el-form>
@@ -120,6 +129,28 @@
         <el-button type="primary" @click="transfer">确定</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="addSignVisible" title="前加签" width="460px">
+      <el-select
+        v-model="addSignUserIds"
+        multiple
+        filterable
+        remote
+        collapse-tags
+        collapse-tags-tooltip
+        :remote-method="searchUsers"
+        placeholder="选择一个或多个加签人"
+        style="width: 100%"
+      >
+        <el-option v-for="u in users" :key="u.id" :label="`${u.realName || u.username}（${u.username}）`" :value="String(u.id)" />
+      </el-select>
+      <el-input v-model="comment" type="textarea" :rows="3" placeholder="加签说明（选填）" style="margin-top: 12px" />
+      <div class="hint">全部加签人完成后，任务自动返回当前审批人。</div>
+      <template #footer>
+        <el-button @click="addSignVisible = false">取消</el-button>
+        <el-button type="primary" @click="addSign">确定加签</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -140,6 +171,8 @@ const ccUserIds = ref<number[]>([])
 const users = ref<any[]>([])
 const transferVisible = ref(false)
 const transferUserId = ref('')
+const addSignVisible = ref(false)
+const addSignUserIds = ref<string[]>([])
 const rejectVisible = ref(false)
 const rejecting = ref(false)
 const rejectMode = ref<'ACTIVITY' | 'TERMINATE'>('ACTIVITY')
@@ -190,7 +223,10 @@ async function load() {
 
 async function searchUsers(q: string) {
   const res: any = await http.get('/system/users/simple', { params: { keyword: q } })
-  users.value = res.data || []
+  const merged = [...users.value, ...(res.data || [])]
+  users.value = merged.filter(
+    (user, index) => merged.findIndex((item) => String(item.id) === String(user.id)) === index,
+  )
 }
 
 async function approve() {
@@ -200,7 +236,7 @@ async function approve() {
     ccUserIds: ccUserIds.value,
     formData: detail.value.resubmitTask ? editFormData.value : undefined,
   })
-  ElMessage.success(detail.value.resubmitTask ? '已重新提交' : '已同意')
+  ElMessage.success(detail.value.resubmitTask ? '已重新提交' : detail.value.addSignTask ? '加签已完成' : '已同意')
   router.push('/todo')
 }
 
@@ -256,6 +292,24 @@ async function transfer() {
     comment: comment.value,
   })
   ElMessage.success('已转办')
+  router.push('/todo')
+}
+
+function openAddSign() {
+  addSignUserIds.value = []
+  comment.value = ''
+  addSignVisible.value = true
+  searchUsers('')
+}
+
+async function addSign() {
+  if (!addSignUserIds.value.length) return ElMessage.warning('请选择加签人')
+  await http.post('/runtime/add-sign', {
+    taskId: route.params.taskId,
+    addSignUserIds: addSignUserIds.value,
+    comment: comment.value,
+  })
+  ElMessage.success('加签任务已发送')
   router.push('/todo')
 }
 

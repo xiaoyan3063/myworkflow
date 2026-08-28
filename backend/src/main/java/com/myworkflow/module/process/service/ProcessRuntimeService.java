@@ -22,6 +22,8 @@ import com.myworkflow.module.process.mapper.WfProcessInstanceExtMapper;
 import com.myworkflow.module.process.util.BpmnEnhanceUtil;
 import com.myworkflow.module.system.entity.SysUser;
 import com.myworkflow.module.system.mapper.SysUserMapper;
+import com.myworkflow.module.ticket.entity.TkTicket;
+import com.myworkflow.module.ticket.service.TicketDataAccessService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.flowable.bpmn.model.FlowElement;
@@ -38,8 +40,10 @@ import org.flowable.engine.history.HistoricProcessInstance;
 import org.flowable.engine.runtime.ProcessInstance;
 import org.flowable.engine.task.Comment;
 import org.flowable.identitylink.api.history.HistoricIdentityLink;
+import org.flowable.identitylink.api.IdentityLink;
 import org.flowable.task.api.Task;
 import org.flowable.task.api.history.HistoricTaskInstance;
+import org.flowable.task.service.impl.persistence.entity.TaskEntity;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -62,6 +66,10 @@ public class ProcessRuntimeService {
     static final String ACTION_REJECT = "REJECT";
     static final String ACTION_TRANSFER = "TRANSFER";
     static final String ACTION_RESUBMIT = "RESUBMIT";
+    static final String ACTION_ADD_SIGN = "ADD_SIGN";
+    static final String ACTION_ADD_SIGN_APPROVE = "ADD_SIGN_APPROVE";
+    static final String CATEGORY_ADD_SIGN = "ADD_SIGN";
+    static final String ADD_SIGN_TASK_KEY_SUFFIX = "__add_sign";
 
     private static final Map<String, String> ACTION_LABELS;
 
@@ -71,6 +79,8 @@ public class ProcessRuntimeService {
         labels.put(ACTION_REJECT, "拒绝");
         labels.put(ACTION_TRANSFER, "转办");
         labels.put(ACTION_RESUBMIT, "重新提交");
+        labels.put(ACTION_ADD_SIGN, "加签");
+        labels.put(ACTION_ADD_SIGN_APPROVE, "加签完成");
         labels.put("PENDING", "待审批");
         labels.put("CANCELLED", "已取消");
         ACTION_LABELS = Collections.unmodifiableMap(labels);
@@ -89,6 +99,7 @@ public class ProcessRuntimeService {
     private final RepositoryService repositoryService;
     private final SysUserMapper userMapper;
     private final NotifyService notifyService;
+    private final TicketDataAccessService ticketDataAccessService;
     private final ObjectMapper objectMapper;
     private final ObjectProvider<ProcessFinishListener> finishListeners;
 
@@ -310,6 +321,11 @@ public class ProcessRuntimeService {
     public void approve(TaskActionRequest req) {
         Task task = getTask(req.getTaskId());
         assertCanHandle(task);
+        assertTicketDataAccess(task.getProcessInstanceId());
+        if (isAddSignTask(task)) {
+            completeAddSignTask(task, req.getComment());
+            return;
+        }
         validateTaskRequiredFields(task);
         claimIfNeeded(task);
         boolean resubmitTask = BpmnEnhanceUtil.SYSTEM_RESUBMIT_ACTIVITY_ID
@@ -402,6 +418,11 @@ public class ProcessRuntimeService {
             throw new BizException("驳回意见不能为空");
         }
         Task task = getTask(req.getTaskId());
+        assertCanHandle(task);
+        assertTicketDataAccess(task.getProcessInstanceId());
+        if (isAddSignTask(task)) {
+            throw new BizException("加签任务只允许完成加签");
+        }
         claimIfNeeded(task);
         // 带了目标节点就按回退处理，否则终止；显式传 rejectMode 优先
         boolean toActivity = "ACTIVITY".equalsIgnoreCase(req.getRejectMode())
@@ -494,6 +515,10 @@ public class ProcessRuntimeService {
     public void transfer(TaskActionRequest req) {
         Task task = getTask(req.getTaskId());
         assertCanHandle(task);
+        assertTicketDataAccess(task.getProcessInstanceId());
+        if (isAddSignTask(task)) {
+            throw new BizException("加签任务不能转办");
+        }
         if (!StringUtils.hasText(req.getTransferUserId())) {
             throw new BizException("请指定转办人");
         }
@@ -504,6 +529,137 @@ public class ProcessRuntimeService {
                 "您有一个新的转办待办：" + Optional.ofNullable(findExt(task.getProcessInstanceId()))
                         .map(WfProcessInstanceExt::getTitle).orElse(task.getName()),
                 "TRANSFER", task.getId());
+    }
+
+    /**
+     * 前加签：暂时移走原任务的办理人，为所选用户创建关联同一流程实例的子任务。
+     * 全部加签人完成后，再把原任务恢复给发起加签的审批人。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void addSign(TaskActionRequest req) {
+        Task parent = getTask(req.getTaskId());
+        assertCanHandle(parent);
+        assertTicketDataAccess(parent.getProcessInstanceId());
+        if (isAddSignTask(parent)) {
+            throw new BizException("加签任务不能继续加签");
+        }
+        List<String> userIds = req.getAddSignUserIds() == null
+                ? Collections.emptyList()
+                : req.getAddSignUserIds().stream().filter(StringUtils::hasText)
+                .map(String::trim).distinct().collect(Collectors.toList());
+        if (userIds.isEmpty()) {
+            throw new BizException("请选择加签人");
+        }
+        if (userIds.size() > 50) {
+            throw new BizException("一次最多选择 50 名加签人");
+        }
+        if (activeAddSignChildren(parent.getId(), parent.getProcessInstanceId()) > 0) {
+            throw new BizException("当前任务已有未完成的加签任务");
+        }
+
+        Long tenantId = UserContext.currentTenantId();
+        String initiator = String.valueOf(UserContext.currentUserId());
+        for (String userId : userIds) {
+            if (initiator.equals(userId)) {
+                throw new BizException("不能将自己选为加签人");
+            }
+            SysUser user;
+            try {
+                user = userMapper.selectById(Long.valueOf(userId));
+            } catch (NumberFormatException e) {
+                throw new BizException("加签用户不存在");
+            }
+            if (user == null || user.getStatus() == null || user.getStatus() != 1
+                    || !Objects.equals(user.getTenantId(), tenantId)) {
+                throw new BizException("加签用户不存在、已停用或不属于当前租户");
+            }
+        }
+
+        claimIfNeeded(parent);
+        // 清掉候选人，否则加签期间同组的其他候选人仍能看到并处理原任务
+        for (IdentityLink link : taskService.getIdentityLinksForTask(parent.getId())) {
+            if (!"candidate".equals(link.getType())) {
+                continue;
+            }
+            if (StringUtils.hasText(link.getUserId())) {
+                taskService.deleteCandidateUser(parent.getId(), link.getUserId());
+            } else if (StringUtils.hasText(link.getGroupId())) {
+                taskService.deleteCandidateGroup(parent.getId(), link.getGroupId());
+            }
+        }
+        addActionComment(parent, ACTION_ADD_SIGN, req.getComment());
+
+        // 上面每次改动都会推高任务的 REV_，必须重新查出最新实体再写回，否则触发乐观锁异常
+        Task suspended = getTask(parent.getId());
+        suspended.setOwner(initiator);
+        suspended.setAssignee(null);
+        taskService.saveTask(suspended);
+
+        WfProcessInstanceExt ext = findExt(parent.getProcessInstanceId());
+        for (String userId : userIds) {
+            Task child = taskService.newTask();
+            child.setName(parent.getName() + "（加签）");
+            child.setDescription("由 " + displayName(initiator) + " 发起加签");
+            child.setParentTaskId(parent.getId());
+            child.setAssignee(userId);
+            child.setOwner(initiator);
+            child.setCategory(CATEGORY_ADD_SIGN);
+            child.setTenantId(parent.getTenantId());
+            TaskEntity entity = (TaskEntity) child;
+            entity.setProcessInstanceId(parent.getProcessInstanceId());
+            entity.setProcessDefinitionId(parent.getProcessDefinitionId());
+            entity.setTaskDefinitionKey(parent.getTaskDefinitionKey() + ADD_SIGN_TASK_KEY_SUFFIX);
+            taskService.saveTask(child);
+            notifyService.send(Long.valueOf(userId), "审批加签",
+                    "您有一个新的加签任务：" + (ext == null ? parent.getName() : ext.getTitle()),
+                    "ADD_SIGN", child.getId());
+        }
+    }
+
+    private void completeAddSignTask(Task task, String comment) {
+        String parentId = task.getParentTaskId();
+        if (!StringUtils.hasText(parentId)) {
+            throw new BizException("加签任务缺少原审批任务");
+        }
+        addActionComment(task, ACTION_ADD_SIGN_APPROVE, comment);
+        taskService.complete(task.getId());
+        if (activeAddSignChildren(parentId, task.getProcessInstanceId()) > 0) {
+            return;
+        }
+        Task parent = taskService.createTaskQuery().taskId(parentId).singleResult();
+        if (parent == null || !StringUtils.hasText(parent.getOwner())) {
+            throw new BizException("原审批任务不存在，无法恢复");
+        }
+        String approver = parent.getOwner();
+        parent.setOwner(null);
+        parent.setAssignee(approver);
+        taskService.saveTask(parent);
+        WfProcessInstanceExt ext = findExt(parent.getProcessInstanceId());
+        notifyService.send(Long.valueOf(approver), "加签已完成",
+                "加签人已完成审批：" + (ext == null ? parent.getName() : ext.getTitle()),
+                "ADD_SIGN_DONE", parent.getId());
+    }
+
+    private boolean isAddSignTask(Task task) {
+        return task != null && CATEGORY_ADD_SIGN.equals(task.getCategory())
+                && StringUtils.hasText(task.getParentTaskId());
+    }
+
+    private long activeAddSignChildren(String parentTaskId, String processInstanceId) {
+        return taskService.createTaskQuery().processInstanceId(processInstanceId).active().list().stream()
+                .filter(this::isAddSignTask)
+                .filter(task -> parentTaskId.equals(task.getParentTaskId()))
+                .count();
+    }
+
+    private String displayName(String userId) {
+        try {
+            SysUser user = userMapper.selectById(Long.valueOf(userId));
+            return user == null ? userId
+                    : (StringUtils.hasText(user.getRealName()) ? user.getRealName() : user.getUsername());
+        } catch (NumberFormatException e) {
+            return userId;
+        }
     }
 
     /**
@@ -533,7 +689,13 @@ public class ProcessRuntimeService {
         m.put("taskName", task.getName());
         m.put("processInstanceId", processInstanceId);
         m.put("resubmitTask", BpmnEnhanceUtil.SYSTEM_RESUBMIT_ACTIVITY_ID.equals(task.getTaskDefinitionKey()));
-        m.putAll(taskFieldConfig(task));
+        m.put("addSignTask", isAddSignTask(task));
+        if (isAddSignTask(task)) {
+            m.put("writableFields", Collections.emptyList());
+            m.put("requiredFields", Collections.emptyList());
+        } else {
+            m.putAll(taskFieldConfig(task));
+        }
         return m;
     }
 
@@ -571,6 +733,25 @@ public class ProcessRuntimeService {
     public boolean hasResubmitTask(String processInstanceId) {
         Map<String, Object> task = myActiveTask(processInstanceId);
         return task != null && Boolean.TRUE.equals(task.get("resubmitTask"));
+    }
+
+    /** 删除被退回、等待发起人重新提交的工单时，同步终止活动流程，避免留下孤立待办。 */
+    @Transactional(rollbackFor = Exception.class)
+    public void cancelForTicketDeletion(String processInstanceId) {
+        if (!StringUtils.hasText(processInstanceId)) {
+            return;
+        }
+        ProcessInstance instance = runtimeService.createProcessInstanceQuery()
+                .processInstanceId(processInstanceId).singleResult();
+        if (instance != null) {
+            runtimeService.deleteProcessInstance(processInstanceId, "发起人删除重新提交工单");
+        }
+        WfProcessInstanceExt ext = findExt(processInstanceId);
+        if (ext != null) {
+            ext.setStatus("CANCELLED");
+            ext.setEndTime(LocalDateTime.now());
+            instanceExtMapper.updateById(ext);
+        }
     }
 
     /** 处理过或当前待办的人都算参与人，业务单据的可见性判断会用到 */
@@ -714,7 +895,24 @@ public class ProcessRuntimeService {
         }
         m.put("comments", taskService.getProcessInstanceComments(
                 (String) m.get("processInstanceId")));
+        applyTicketDataAccess(m, (String) m.get("processInstanceId"));
         return m;
+    }
+
+    private void applyTicketDataAccess(Map<String, Object> detail, String processInstanceId) {
+        TkTicket ticket = ticketDataAccessService.ticketByProcess(processInstanceId);
+        if (ticket == null) {
+            detail.put("dataAccess", true);
+            return;
+        }
+        boolean allowed = ticketDataAccessService.hasDataAccess(ticket);
+        detail.put("dataAccess", allowed);
+        if (!allowed) {
+            detail.put("variables", Collections.emptyMap());
+            detail.put("formData", "{}");
+            detail.put("accessMessage",
+                    "您是当前审批人，但用户角色的数据权限不包含该工单，字段已隐藏且暂不能办理；授权后请刷新页面");
+        }
     }
 
     private void appendFormSchema(Map<String, Object> detail, WfProcessInstanceExt ext) {
@@ -761,6 +959,7 @@ public class ProcessRuntimeService {
         m.put("currentApprover", currentApprovers(
                 Collections.singletonList(processInstanceId)).get(processInstanceId));
         appendFormSchema(m, ext);
+        applyTicketDataAccess(m, processInstanceId);
         return m;
     }
 
@@ -844,6 +1043,8 @@ public class ProcessRuntimeService {
                     candidatesByTask.get(t.getId()), liveTasks.get(t.getId()));
         }
         nodes.forEach(this::summarizeNode);
+        // 前加签先于原审批人办理，但子任务创建更晚；按开始时间分组会排到原节点后面，这里挪回前面
+        nodes = reorderAddSignAhead(nodes);
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("starterName", ext == null ? null : ext.getStarterName());
@@ -854,6 +1055,34 @@ public class ProcessRuntimeService {
         result.put("endTime", ext == null || ext.getEndTime() == null
                 ? null : ext.getEndTime().format(TIME_FORMAT));
         result.put("nodes", nodes);
+        return result;
+    }
+
+    /**
+     * 把加签节点挪到对应原审批节点前面。只匹配时间线上最近的上一个同节点，
+     * 避免驳回后再经过同一节点时，把后一次加签插到第一次审批前面。
+     */
+    private List<Map<String, Object>> reorderAddSignAhead(List<Map<String, Object>> nodes) {
+        List<Map<String, Object>> result = new ArrayList<>(nodes);
+        for (int i = 0; i < result.size(); i++) {
+            String activityId = (String) result.get(i).get("activityId");
+            if (!StringUtils.hasText(activityId) || !activityId.endsWith(ADD_SIGN_TASK_KEY_SUFFIX)) {
+                continue;
+            }
+            String parentId = activityId.substring(0, activityId.length() - ADD_SIGN_TASK_KEY_SUFFIX.length());
+            int parentIndex = -1;
+            for (int j = i - 1; j >= 0; j--) {
+                if (parentId.equals(result.get(j).get("activityId"))) {
+                    parentIndex = j;
+                    break;
+                }
+            }
+            if (parentIndex < 0) {
+                continue;
+            }
+            result.add(parentIndex, result.remove(i));
+            i = parentIndex;
+        }
         return result;
     }
 
@@ -905,9 +1134,12 @@ public class ProcessRuntimeService {
     private void appendHandler(Map<String, Object> group, HistoricTaskInstance task,
                                List<Comment> comments, Map<String, String> names,
                                List<String> candidates, Task live) {
+        // 一个任务可能有多条留痕（如先加签后审批），取最新的一条代表这一步的结果。
+        // Flowable 返回的评论按时间倒序，不能靠列表顺序判断新旧
         Comment acted = comments == null ? null : comments.stream()
                 .filter(c -> ACTION_LABELS.containsKey(c.getType()) || StringUtils.hasText(c.getFullMessage()))
-                .reduce((first, second) -> second)
+                .max(Comparator.comparing(Comment::getTime,
+                        Comparator.nullsFirst(Comparator.naturalOrder())))
                 .orElse(null);
 
         String userId;
@@ -1114,6 +1346,13 @@ public class ProcessRuntimeService {
         }
     }
 
+    private void assertTicketDataAccess(String processInstanceId) {
+        TkTicket ticket = ticketDataAccessService.ticketByProcess(processInstanceId);
+        if (ticket != null && !ticketDataAccessService.hasDataAccess(ticket)) {
+            throw ticketDataAccessService.denied();
+        }
+    }
+
     private Map<String, Object> toTaskMap(Task t) {
         Map<String, Object> m = new HashMap<>();
         m.put("taskId", t.getId());
@@ -1123,6 +1362,7 @@ public class ProcessRuntimeService {
         m.put("dueDate", t.getDueDate());
         m.put("processInstanceId", t.getProcessInstanceId());
         m.put("processDefinitionId", t.getProcessDefinitionId());
+        m.put("addSignTask", isAddSignTask(t));
         WfProcessInstanceExt ext = findExt(t.getProcessInstanceId());
         if (ext != null) {
             m.put("title", ext.getTitle());

@@ -39,6 +39,8 @@ export const MSG_TYPE: Record<string, { text: string; tone: string }> = {
   CC: { text: '抄送', tone: 'info' },
   REJECT: { text: '驳回', tone: 'danger' },
   TRANSFER: { text: '转办', tone: 'info' },
+  ADD_SIGN: { text: '加签', tone: 'warning' },
+  ADD_SIGN_DONE: { text: '加签完成', tone: 'success' },
   COMPLETE: { text: '完成', tone: 'success' },
   TIMEOUT: { text: '催办', tone: 'danger' },
 }
