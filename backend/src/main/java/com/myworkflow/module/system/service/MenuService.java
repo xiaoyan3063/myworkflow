@@ -60,6 +60,9 @@ public class MenuService {
         if (menu.getSortNo() == null) {
             menu.setSortNo(0);
         }
+        if (!"BUTTON".equals(menu.getMenuType()) && !StringUtils.hasText(menu.getIcon())) {
+            menu.setIcon("DIR".equals(menu.getMenuType()) ? "Folder" : "Document");
+        }
         if (menu.getId() == null) {
             menuMapper.insert(menu);
             grantToAdmin(menu.getId());
@@ -177,6 +180,7 @@ public class MenuService {
         ensureDeleteTicketMenu();
         ensureSystemLogMenu();
         ensureApprovalRoleMenu();
+        ensureMenuIcons();
         syncAllTypeMenus();
         grantAllToAdminIfEmpty();
         ensureSalesRole();
@@ -203,16 +207,56 @@ public class MenuService {
             menuMapper.updateById(system);
         }
         if (menuMapper.selectById(46L) == null) {
-            insert(46L, 40L, "MENU", "系统日志", "/system-logs", "Document", "sys:log", 5);
+            insert(46L, 40L, "MENU", "系统日志", "/system-logs", "Notebook", "sys:log", 5);
         }
         grantToAdmin(46L);
     }
 
     private void ensureApprovalRoleMenu() {
         if (menuMapper.selectById(23L) == null) {
-            insert(23L, 20L, "MENU", "审批角色", "/approval-roles", null, "process:manage", 3);
+            insert(23L, 20L, "MENU", "审批角色", "/approval-roles", "Stamp", "process:manage", 3);
         }
         grantToAdmin(23L);
+    }
+
+    /** 只给空图标补默认，已手工选过的不覆盖 */
+    private void ensureMenuIcons() {
+        java.util.Map<Long, String> defaults = new java.util.LinkedHashMap<>();
+        defaults.put(1L, "Odometer");
+        defaults.put(10L, "Checked");
+        defaults.put(11L, "Clock");
+        defaults.put(12L, "CircleCheck");
+        defaults.put(13L, "Promotion");
+        defaults.put(14L, "Share");
+        defaults.put(15L, "Plus");
+        defaults.put(20L, "SetUp");
+        defaults.put(21L, "Connection");
+        defaults.put(22L, "Tickets");
+        defaults.put(23L, "Stamp");
+        defaults.put(TICKET_DIR_ID, "Document");
+        defaults.put(31L, "Collection");
+        defaults.put(32L, "Files");
+        defaults.put(40L, "Setting");
+        defaults.put(41L, "User");
+        defaults.put(42L, "OfficeBuilding");
+        defaults.put(43L, "Avatar");
+        defaults.put(44L, "Menu");
+        defaults.put(45L, "Bell");
+        defaults.put(46L, "Notebook");
+        for (java.util.Map.Entry<Long, String> e : defaults.entrySet()) {
+            SysMenu menu = menuMapper.selectById(e.getKey());
+            if (menu != null && !StringUtils.hasText(menu.getIcon())) {
+                menu.setIcon(e.getValue());
+                menuMapper.updateById(menu);
+            }
+        }
+        List<SysMenu> rest = menuMapper.selectList(new LambdaQueryWrapper<SysMenu>()
+                .and(w -> w.isNull(SysMenu::getIcon).or().eq(SysMenu::getIcon, ""))
+                .ne(SysMenu::getMenuType, "BUTTON"));
+        for (SysMenu menu : rest) {
+            menu.setIcon("DIR".equals(menu.getMenuType()) ? "Folder" : "Document");
+            menuMapper.updateById(menu);
+        }
     }
 
     private void grantToAdmin(Long menuId) {
@@ -286,30 +330,30 @@ public class MenuService {
     private void seed() {
         insert(1L, 0L, "MENU", "工作台", "/dashboard", "Odometer", null, 1);
         insert(10L, 0L, "DIR", "审批中心", null, "Checked", null, 10);
-        insert(11L, 10L, "MENU", "我的待办", "/todo", null, null, 1);
-        insert(12L, 10L, "MENU", "我的已办", "/done", null, null, 2);
-        insert(13L, 10L, "MENU", "我发起的", "/started", null, null, 3);
-        insert(14L, 10L, "MENU", "抄送我的", "/cc", null, null, 4);
-        insert(15L, 10L, "MENU", "发起审批", "/start", null, null, 5);
+        insert(11L, 10L, "MENU", "我的待办", "/todo", "Clock", null, 1);
+        insert(12L, 10L, "MENU", "我的已办", "/done", "CircleCheck", null, 2);
+        insert(13L, 10L, "MENU", "我发起的", "/started", "Promotion", null, 3);
+        insert(14L, 10L, "MENU", "抄送我的", "/cc", "Share", null, 4);
+        insert(15L, 10L, "MENU", "发起审批", "/start", "Plus", null, 5);
         insert(20L, 0L, "DIR", "流程设计", null, "SetUp", "process:manage", 20);
-        insert(21L, 20L, "MENU", "流程管理", "/process", null, "process:manage", 1);
-        insert(22L, 20L, "MENU", "表单管理", "/forms", null, "process:manage", 2);
-        insert(23L, 20L, "MENU", "审批角色", "/approval-roles", null, "process:manage", 3);
+        insert(21L, 20L, "MENU", "流程管理", "/process", "Connection", "process:manage", 1);
+        insert(22L, 20L, "MENU", "表单管理", "/forms", "Tickets", "process:manage", 2);
+        insert(23L, 20L, "MENU", "审批角色", "/approval-roles", "Stamp", "process:manage", 3);
         insert(TICKET_DIR_ID, 0L, "DIR", "工单", null, "Document", null, 30);
-        insert(31L, TICKET_DIR_ID, "MENU", "工单类型", "/ticket-types", null, "ticket:type", 1);
-        insert(32L, TICKET_DIR_ID, "MENU", "工单总表", "/tickets", null, "ticket:list", 2);
+        insert(31L, TICKET_DIR_ID, "MENU", "工单类型", "/ticket-types", "Collection", "ticket:type", 1);
+        insert(32L, TICKET_DIR_ID, "MENU", "工单总表", "/tickets", "Files", "ticket:list", 2);
         insert(33L, TICKET_DIR_ID, "BUTTON", "新建工单", null, null, "ticket:create", 81);
         insert(34L, TICKET_DIR_ID, "BUTTON", "编辑工单", null, null, "ticket:update", 82);
         insert(35L, TICKET_DIR_ID, "BUTTON", "提交审批", null, null, "ticket:submit", 83);
         insert(36L, TICKET_DIR_ID, "BUTTON", "删除工单", null, null, "ticket:delete", 84);
         insert(37L, TICKET_DIR_ID, "BUTTON", "保存类型/设计", null, null, "ticket:type:save", 85);
         insert(38L, TICKET_DIR_ID, "BUTTON", "删除类型", null, null, "ticket:type:delete", 86);
-        insert(40L, 0L, "DIR", "系统管理", null, "OfficeBuilding", null, 40);
-        insert(41L, 40L, "MENU", "用户管理", "/users", null, "sys:user", 1);
-        insert(42L, 40L, "MENU", "部门管理", "/depts", null, "sys:dept", 2);
-        insert(43L, 40L, "MENU", "角色管理", "/roles", null, "sys:role", 3);
-        insert(44L, 40L, "MENU", "菜单管理", "/menus", null, "sys:menu", 4);
-        insert(46L, 40L, "MENU", "系统日志", "/system-logs", "Document", "sys:log", 5);
+        insert(40L, 0L, "DIR", "系统管理", null, "Setting", null, 40);
+        insert(41L, 40L, "MENU", "用户管理", "/users", "User", "sys:user", 1);
+        insert(42L, 40L, "MENU", "部门管理", "/depts", "OfficeBuilding", "sys:dept", 2);
+        insert(43L, 40L, "MENU", "角色管理", "/roles", "Avatar", "sys:role", 3);
+        insert(44L, 40L, "MENU", "菜单管理", "/menus", "Menu", "sys:menu", 4);
+        insert(46L, 40L, "MENU", "系统日志", "/system-logs", "Notebook", "sys:log", 5);
         insert(45L, 0L, "MENU", "消息中心", "/messages", "Bell", null, 90);
         log.info("已写入默认菜单");
     }
