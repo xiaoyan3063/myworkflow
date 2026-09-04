@@ -42,6 +42,16 @@
     </el-table>
   </div>
 
+  <el-drawer v-model="childVisible" :size="drawerSize" :title="childTitle" destroy-on-close>
+    <TicketDetailPanel
+      v-if="childVisible"
+      :ticket-id="childId"
+      embedded
+      @close="childVisible = false"
+      @changed="load"
+    />
+  </el-drawer>
+
   <el-dialog v-model="visible" :title="editing.id ? '编辑明细' : '新增明细'" width="720px">
     <TicketForm
       v-if="visible"
@@ -60,23 +70,28 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import http from '@/utils/http'
 import TicketForm from './TicketForm.vue'
 import { ticketStatusText, ticketStatusTone } from '@/utils/status'
 import { loadUserNames, userNamesOf } from '@/utils/userNames'
 
+// 详情页里也会渲染子表，异步引入打断循环依赖
+const TicketDetailPanel = defineAsyncComponent(() => import('@/views/ticket/TicketDetailView.vue'))
+
 const props = defineProps<{ parentId: string | number }>()
-const router = useRouter()
-const route = useRoute()
 const groups = ref<any[]>([])
 const activeGroup = ref<any>(null)
 const editing = ref<any>({})
 const formData = ref<Record<string, any>>({})
 const visible = ref(false)
 const saving = ref(false)
+const childVisible = ref(false)
+const childId = ref('')
+const childTitle = ref('')
+// 窄屏放不下一半，退回整屏
+const drawerSize = computed(() => (window.innerWidth < 1200 ? '90%' : '50%'))
 
 function displayValue(value: any, field?: any) {
   if (field?.fieldType === 'user' || field?.fieldType === 'users') return userNamesOf(value) || '-'
@@ -185,11 +200,11 @@ async function removeChild(row: any) {
   await load()
 }
 
+/** 明细详情走侧边抽屉，主单信息留在下面不被顶掉 */
 function openChild(group: any, row: any) {
-  const code = group.childType?.typeCode || group.relation?.childTypeCode
-  if (!code) return ElMessage.warning('明细类型已删除或停用')
-  // 带上来源，明细详情页的「返回」才能回到主单而不是明细列表
-  router.push({ path: `/tickets/${code}/${row.id}`, query: { from: route.fullPath } })
+  childId.value = String(row.id)
+  childTitle.value = `${group.relation?.relationName || '明细'} · ${row.ticketNo || ''}`
+  childVisible.value = true
 }
 
 onMounted(load)

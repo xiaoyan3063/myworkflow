@@ -1,10 +1,11 @@
 <template>
-  <div class="page-card" v-loading="loading">
+  <div class="page-card" :class="{ embedded }" v-loading="loading">
     <div class="head">
-      <div>
+      <div v-if="!embedded">
         <h1 class="page-title">工单详情</h1>
         <p class="page-sub">{{ ticket.ticketNo }} · {{ ticket.title }}</p>
       </div>
+      <div v-else></div>
       <div class="head-actions">
         <el-button
           v-if="hasAction('save') && canEdit && hasPerm('ticket:update')"
@@ -36,8 +37,10 @@
           :before-action="saveBeforeAction"
           @done="onActionDone"
         />
-        <el-button v-if="hasAction('cancel')" @click="goBack">返回</el-button>
-        <el-button v-else @click="goBack">返回列表</el-button>
+        <template v-if="!embedded">
+          <el-button v-if="hasAction('cancel')" @click="goBack">返回</el-button>
+          <el-button v-else @click="goBack">返回列表</el-button>
+        </template>
       </div>
     </div>
 
@@ -60,8 +63,9 @@
       :title="fieldAccess.accessMessage || '当前用户角色没有该工单的数据权限，字段已隐藏且不能审批；授权后请刷新页面'"
     />
 
-    <el-row v-if="!loading" :gutter="20">
-      <el-col :span="showRight ? 14 : 24">
+    <!-- 抽屉里横向放不下两栏，改成「工单信息 / 审批轨迹」两个页签 -->
+    <component :is="embedded ? 'el-tabs' : 'el-row'" v-if="!loading" v-bind="layoutProps">
+      <component :is="embedded ? 'el-tab-pane' : 'el-col'" v-bind="mainPaneProps">
         <div
           v-for="(sec, i) in sections"
           v-show="mainOf(sec).length || formOf(sec).length"
@@ -122,13 +126,13 @@
           />
         </div>
         <TicketChildGroups v-if="ticket.id && dataAccess" ref="childGroupsRef" :parent-id="ticket.id" />
-      </el-col>
-      <el-col v-if="showRight" :span="10">
-        <h3>审批轨迹</h3>
+      </component>
+      <component :is="embedded ? 'el-tab-pane' : 'el-col'" v-if="showRight" v-bind="timelinePaneProps">
+        <h3 v-if="!embedded">审批轨迹</h3>
         <ApprovalTimeline v-if="hasTimeline" :data="timeline" />
         <el-empty v-else description="尚未提交审批" />
-      </el-col>
-    </el-row>
+      </component>
+    </component>
   </div>
 </template>
 
@@ -156,8 +160,13 @@ const MAIN_TITLE: Record<string, string> = {
   processInstId: '流程实例',
 }
 
+/** 传了 ticketId 就是被主单子表以抽屉方式内嵌，不走路由也不显示返回按钮 */
+const props = defineProps<{ ticketId?: string | number; embedded?: boolean }>()
+const emit = defineEmits<{ (e: 'close'): void; (e: 'changed'): void }>()
+
 const route = useRoute()
 const router = useRouter()
+const currentId = computed(() => String(props.ticketId ?? route.params.id ?? ''))
 const loading = ref(true)
 const saving = ref(false)
 const submitting = ref(false)
@@ -205,6 +214,16 @@ const doneNodeFields = computed<string[]>(() => {
     (f: string) => !covered.has(f) && !hiddenFields.value.includes(f),
   )
 })
+const activeTab = ref('form')
+const layoutProps = computed(() => (props.embedded
+  ? { modelValue: activeTab.value, 'onUpdate:modelValue': (v: any) => (activeTab.value = String(v)) }
+  : { gutter: 20 }))
+const mainPaneProps = computed(() => (props.embedded
+  ? { label: '工单信息', name: 'form' }
+  : { span: showRight.value ? 14 : 24 }))
+const timelinePaneProps = computed(() => (props.embedded
+  ? { label: '审批轨迹', name: 'timeline' }
+  : { span: 10 }))
 const sections = computed(() => detailSchema.value.sections || [])
 const hasTimeline = computed(() => !!(timeline.value?.startTime || timeline.value?.nodes?.length))
 const showRight = computed(() => detailSchema.value.showTimeline !== false)
@@ -244,6 +263,10 @@ function patchForm(partial: Record<string, any>) {
 }
 
 function goBack() {
+  if (props.embedded) {
+    emit('close')
+    return
+  }
   const from = route.query.from as string
   if (from) {
     router.push(from)
@@ -260,6 +283,7 @@ async function save() {
       title: ticket.value.title,
       formData: { ...formData.value },
     })
+    emit('changed')
     ElMessage.success('已保存')
   } finally {
     saving.value = false
@@ -284,6 +308,7 @@ async function saveApprovalFields(showMessage = true) {
     )
     ticket.value = res.data || ticket.value
     formData.value = { ...(ticket.value.formData || formData.value) }
+    emit('changed')
     if (showMessage) ElMessage.success('节点数据已保存')
   } finally {
     saving.value = false
@@ -304,6 +329,7 @@ async function submit() {
     ticket.value = res.data || ticket.value
     ElMessage.success('已提交审批')
     await reload()
+    emit('changed')
   } finally {
     submitting.value = false
   }
@@ -318,6 +344,7 @@ async function remove() {
   )
   await http.delete(`/ticket/tickets/${ticket.value.id}`)
   ElMessage.success('已删除')
+  emit('changed')
   goBack()
 }
 
@@ -373,11 +400,11 @@ async function saveBeforeAction() {
 async function onActionDone() {
   await reload()
   await childGroupsRef.value?.load?.()
+  emit('changed')
 }
 
 async function reload() {
-  const id = route.params.id as string
-  const res: any = await http.get(`/ticket/tickets/${id}`)
+  const res: any = await http.get(`/ticket/tickets/${currentId.value}`)
   ticket.value = res.data || {}
   formData.value = { ...(ticket.value.formData || {}) }
   if (ticket.value.processInstId) {
@@ -396,8 +423,7 @@ async function reload() {
 async function init() {
   loading.value = true
   try {
-    const id = route.params.id as string
-    const res: any = await http.get(`/ticket/tickets/${id}`)
+    const res: any = await http.get(`/ticket/tickets/${currentId.value}`)
     ticket.value = res.data || {}
     formData.value = { ...(ticket.value.formData || {}) }
     const jobs: Promise<any>[] = []
@@ -433,8 +459,8 @@ async function init() {
 }
 
 onMounted(init)
-// 主单和明细单共用同一条路由，只换参数时组件会被复用，必须手动重新加载
-watch(() => route.params.id, (id, previous) => {
+// 主单和明细单共用同一条路由，只换参数时组件会被复用；抽屉里换单据同理
+watch(currentId, (id, previous) => {
   if (id && id !== previous) init()
 })
 </script>
@@ -477,5 +503,8 @@ watch(() => route.params.id, (id, previous) => {
   word-break: break-all;
 }
 .sec-form { margin-top: 12px; }
+/* 抽屉里已经有自己的留白和标题栏，去掉页面级卡片样式 */
+.page-card.embedded { padding: 0; background: transparent; box-shadow: none; border: none; }
+.page-card.embedded .head { margin-bottom: 12px; }
 h3 { margin: 0 0 12px; font-size: 16px; }
 </style>
