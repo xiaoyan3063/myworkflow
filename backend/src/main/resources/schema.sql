@@ -310,6 +310,29 @@ CREATE TABLE IF NOT EXISTS tk_type (
     deleted         INT DEFAULT 0
 );
 
+-- 工单类型之间的明细关系。同一主类型可挂多种明细类型。
+CREATE TABLE IF NOT EXISTS tk_type_relation (
+    id              BIGINT PRIMARY KEY,
+    tenant_id       BIGINT DEFAULT 0,
+    parent_type_id  BIGINT NOT NULL,
+    child_type_id   BIGINT NOT NULL,
+    relation_code   VARCHAR(64) NOT NULL,
+    relation_name   VARCHAR(128) NOT NULL,
+    cascade_delete  INT DEFAULT 1,
+    -- 明细条数范围，0 表示不限；节点可在流程设计器里单独覆盖
+    min_rows        INT DEFAULT 0,
+    max_rows        INT DEFAULT 0,
+    -- 1：主单发起提交时也校验下限；0：只在审批节点同意时校验
+    check_min_on_start INT DEFAULT 0,
+    sort_no         INT DEFAULT 0,
+    status          INT DEFAULT 1,
+    create_time     TIMESTAMP,
+    update_time     TIMESTAMP,
+    create_by       BIGINT,
+    update_by       BIGINT,
+    deleted         INT DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS tk_field (
     id              BIGINT PRIMARY KEY,
     tenant_id       BIGINT DEFAULT 0,
@@ -381,6 +404,8 @@ CREATE TABLE IF NOT EXISTS tk_ticket (
     starter_id      BIGINT,
     starter_name    VARCHAR(64),
     process_inst_id VARCHAR(64),
+    parent_ticket_id BIGINT,
+    type_relation_id BIGINT,
     schema_version  INT,
     form_data       JSONB,
     create_time     TIMESTAMP,
@@ -412,6 +437,11 @@ ALTER TABLE tk_form_ui ADD COLUMN IF NOT EXISTS status VARCHAR(16) DEFAULT 'PUBL
 ALTER TABLE tk_list_ui ADD COLUMN IF NOT EXISTS status VARCHAR(16) DEFAULT 'PUBLISHED';
 ALTER TABLE tk_detail_ui ADD COLUMN IF NOT EXISTS status VARCHAR(16) DEFAULT 'PUBLISHED';
 ALTER TABLE tk_ticket ADD COLUMN IF NOT EXISTS schema_version INT;
+ALTER TABLE tk_ticket ADD COLUMN IF NOT EXISTS parent_ticket_id BIGINT;
+ALTER TABLE tk_ticket ADD COLUMN IF NOT EXISTS type_relation_id BIGINT;
+ALTER TABLE tk_type_relation ADD COLUMN IF NOT EXISTS min_rows INT DEFAULT 0;
+ALTER TABLE tk_type_relation ADD COLUMN IF NOT EXISTS max_rows INT DEFAULT 0;
+ALTER TABLE tk_type_relation ADD COLUMN IF NOT EXISTS check_min_on_start INT DEFAULT 0;
 UPDATE tk_form_ui SET status = 'PUBLISHED' WHERE status IS NULL OR status = '';
 UPDATE tk_list_ui SET status = 'PUBLISHED' WHERE status IS NULL OR status = '';
 UPDATE tk_detail_ui SET status = 'PUBLISHED' WHERE status IS NULL OR status = '';
@@ -423,11 +453,15 @@ CREATE INDEX IF NOT EXISTS idx_tk_ticket_type_status_time ON tk_ticket (type_id,
 CREATE INDEX IF NOT EXISTS idx_tk_ticket_no ON tk_ticket (ticket_no);
 CREATE INDEX IF NOT EXISTS idx_tk_ticket_starter_time ON tk_ticket (starter_id, create_time DESC);
 CREATE INDEX IF NOT EXISTS idx_tk_ticket_proc_inst ON tk_ticket (process_inst_id);
+CREATE INDEX IF NOT EXISTS idx_tk_ticket_parent_relation ON tk_ticket (parent_ticket_id, type_relation_id);
 CREATE INDEX IF NOT EXISTS idx_tk_ticket_file_ticket ON tk_ticket_file (ticket_id);
 CREATE INDEX IF NOT EXISTS idx_tk_field_type ON tk_field (type_id);
 CREATE INDEX IF NOT EXISTS idx_tk_form_ui_type ON tk_form_ui (type_id, status, version DESC);
 CREATE INDEX IF NOT EXISTS idx_tk_list_ui_type ON tk_list_ui (type_id, status, version DESC);
 CREATE INDEX IF NOT EXISTS idx_tk_detail_ui_type ON tk_detail_ui (type_id, status, version DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS uk_tk_type_relation_code
+    ON tk_type_relation (tenant_id, parent_type_id, relation_code, deleted);
+CREATE INDEX IF NOT EXISTS idx_tk_type_relation_child ON tk_type_relation (child_type_id);
 CREATE INDEX IF NOT EXISTS idx_wf_inst_ext_business ON wf_process_instance_ext (business_key);
 CREATE INDEX IF NOT EXISTS idx_wf_inst_ext_inst ON wf_process_instance_ext (process_inst_id);
 

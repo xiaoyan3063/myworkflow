@@ -121,6 +121,7 @@
             @update:model-value="patchForm"
           />
         </div>
+        <TicketChildGroups v-if="ticket.id && dataAccess" ref="childGroupsRef" :parent-id="ticket.id" />
       </el-col>
       <el-col v-if="showRight" :span="10">
         <h3>审批轨迹</h3>
@@ -132,13 +133,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import http from '@/utils/http'
 import TicketForm from '@/components/ticket/TicketForm.vue'
 import ApprovalTimeline from '@/components/ApprovalTimeline.vue'
 import ApprovalActions from '@/components/ApprovalActions.vue'
+import TicketChildGroups from '@/components/ticket/TicketChildGroups.vue'
 import { ticketStatusText, ticketStatusTone } from '@/utils/status'
 import { hasPerm } from '@/utils/permission'
 
@@ -166,6 +168,7 @@ const formSchema = ref<any>({ fields: [], raw: [] })
 const nodeSchema = ref<any>({ fields: [], raw: [] })
 const timeline = ref<any>({ nodes: [] })
 const myTask = ref<any>(null)
+const childGroupsRef = ref<any>(null)
 /** 后端按流程走到的节点算出的字段可见性：nodeFields 全部节点字段，hiddenFields 尚未走到的 */
 const fieldAccess = ref<any>({})
 const detailSchema = ref<any>({
@@ -174,7 +177,7 @@ const detailSchema = ref<any>({
   actions: ['save', 'submit'],
 })
 
-const isDraftLike = computed(() => ticket.value.status === 'DRAFT' || ticket.value.status === 'REJECTED')
+const isDraftLike = computed(() => ticket.value.status === 'DRAFT')
 // 被退回到发起人节点时工单仍是审批中，但持有重提待办的人要能改表单
 const canEdit = computed(() => isDraftLike.value || !!myTask.value?.resubmitTask)
 const canEditApprovalFields = computed(
@@ -241,6 +244,11 @@ function patchForm(partial: Record<string, any>) {
 }
 
 function goBack() {
+  const from = route.query.from as string
+  if (from) {
+    router.push(from)
+    return
+  }
   const code = (route.params.typeCode as string) || ticket.value.typeCode
   router.push(code ? `/tickets/${code}` : '/tickets')
 }
@@ -364,6 +372,7 @@ async function saveBeforeAction() {
 
 async function onActionDone() {
   await reload()
+  await childGroupsRef.value?.load?.()
 }
 
 async function reload() {
@@ -384,7 +393,7 @@ async function reload() {
   await loadMyTask()
 }
 
-onMounted(async () => {
+async function init() {
   loading.value = true
   try {
     const id = route.params.id as string
@@ -421,6 +430,12 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
+}
+
+onMounted(init)
+// 主单和明细单共用同一条路由，只换参数时组件会被复用，必须手动重新加载
+watch(() => route.params.id, (id, previous) => {
+  if (id && id !== previous) init()
 })
 </script>
 <style scoped>

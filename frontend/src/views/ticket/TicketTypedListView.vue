@@ -102,10 +102,10 @@ const formSchema = ref<any>({ fields: [], raw: [] })
 const nodeFields = ref<string[]>([])
 
 function canEdit(row: any) {
-  return row.status === 'DRAFT' || row.status === 'REJECTED'
+  return row.status === 'DRAFT'
 }
 function canSubmit(row: any) {
-  return row.status === 'DRAFT' || row.status === 'REJECTED'
+  return row.status === 'DRAFT'
 }
 
 function mainProp(field: string) {

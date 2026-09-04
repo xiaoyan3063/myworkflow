@@ -23,7 +23,13 @@ import com.myworkflow.module.process.util.BpmnEnhanceUtil;
 import com.myworkflow.module.system.entity.SysUser;
 import com.myworkflow.module.system.mapper.SysUserMapper;
 import com.myworkflow.module.ticket.entity.TkTicket;
+import com.myworkflow.module.ticket.entity.TkType;
+import com.myworkflow.module.ticket.entity.TkTypeRelation;
+import com.myworkflow.module.ticket.mapper.TkTicketMapper;
+import com.myworkflow.module.ticket.mapper.TkTypeMapper;
+import com.myworkflow.module.ticket.mapper.TkTypeRelationMapper;
 import com.myworkflow.module.ticket.service.TicketDataAccessService;
+import com.myworkflow.module.ticket.service.TicketService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.flowable.bpmn.model.FlowElement;
@@ -100,6 +106,9 @@ public class ProcessRuntimeService {
     private final SysUserMapper userMapper;
     private final NotifyService notifyService;
     private final TicketDataAccessService ticketDataAccessService;
+    private final TkTicketMapper ticketMapper;
+    private final TkTypeMapper ticketTypeMapper;
+    private final TkTypeRelationMapper typeRelationMapper;
     private final ObjectMapper objectMapper;
     private final ObjectProvider<ProcessFinishListener> finishListeners;
 
@@ -327,6 +336,9 @@ public class ProcessRuntimeService {
             return;
         }
         validateTaskRequiredFields(task);
+        validateChildRequiredFields(task);
+        validateChildRowCounts(task);
+        validateChildTicketsClosed(task);
         claimIfNeeded(task);
         boolean resubmitTask = BpmnEnhanceUtil.SYSTEM_RESUBMIT_ACTIVITY_ID
                 .equals(task.getTaskDefinitionKey());
@@ -693,8 +705,13 @@ public class ProcessRuntimeService {
         if (isAddSignTask(task)) {
             m.put("writableFields", Collections.emptyList());
             m.put("requiredFields", Collections.emptyList());
+            m.put("detailConfigs", Collections.emptyList());
+            m.put("childValidationMode", "NONE");
+            m.put("childValidationRelationIds", Collections.emptyList());
         } else {
             m.putAll(taskFieldConfig(task));
+            m.putAll(BpmnEnhanceUtil.readTaskDetailConfig(
+                    processModelXml(task.getProcessDefinitionId()), task.getTaskDefinitionKey()));
         }
         return m;
     }
@@ -812,6 +829,37 @@ public class ProcessRuntimeService {
         return result;
     }
 
+    public Map<String, List<String>> detailVisibility(String processInstanceId) {
+        Map<String, List<String>> result = new HashMap<>();
+        result.put("nodeRelationIds", new ArrayList<>());
+        result.put("hiddenRelationIds", new ArrayList<>());
+        if (!StringUtils.hasText(processInstanceId)) return result;
+        HistoricProcessInstance instance = historyService.createHistoricProcessInstanceQuery()
+                .processInstanceId(processInstanceId).singleResult();
+        if (instance == null) return result;
+        Map<String, List<String>> byActivity = BpmnEnhanceUtil.readTaskDetailRelationsByActivity(
+                processModelXml(instance.getProcessDefinitionId()));
+        Set<String> reached = historyService.createHistoricActivityInstanceQuery()
+                .processInstanceId(processInstanceId).list().stream()
+                .map(HistoricActivityInstance::getActivityId).collect(Collectors.toSet());
+        Set<String> all = new LinkedHashSet<>();
+        Set<String> visible = new LinkedHashSet<>();
+        byActivity.forEach((activityId, ids) -> {
+            all.addAll(ids);
+            if (reached.contains(activityId)) visible.addAll(ids);
+        });
+        result.put("nodeRelationIds", new ArrayList<>(all));
+        result.put("hiddenRelationIds",
+                all.stream().filter(id -> !visible.contains(id)).collect(Collectors.toList()));
+        return result;
+    }
+
+    public List<String> designNodeRelations(String bpmnXml) {
+        Set<String> ids = new LinkedHashSet<>();
+        BpmnEnhanceUtil.readTaskDetailRelationsByActivity(bpmnXml).values().forEach(ids::addAll);
+        return new ArrayList<>(ids);
+    }
+
     /** 流程还没发起时，所有节点字段都属于后续环节，创建工单时一律不显示。 */
     public List<String> designNodeFields(String bpmnXml) {
         Set<String> fields = new LinkedHashSet<>();
@@ -858,6 +906,151 @@ public class ProcessRuntimeService {
                 .collect(Collectors.toList());
         if (!missing.isEmpty()) {
             throw new BizException("请填写本节点必填字段：" + String.join("、", missing));
+        }
+    }
+
+    /**
+     * 主流程节点可选择不校验、校验全部明细类型或校验设计器勾选的明细类型。
+     * 按配置顺序逐类执行 EXISTS 查询，发现第一类未关闭就立即返回。
+     */
+    private void validateChildTicketsClosed(Task task) {
+        Map<String, Object> config = BpmnEnhanceUtil.readTaskDetailConfig(
+                processModelXml(task.getProcessDefinitionId()), task.getTaskDefinitionKey());
+        String mode = String.valueOf(config.getOrDefault("childValidationMode", "NONE"));
+        if ("NONE".equals(mode)) return;
+
+        TkTicket parent = ticketDataAccessService.ticketByProcess(task.getProcessInstanceId());
+        if (parent == null) return;
+        ticketMapper.selectForUpdate(parent.getId());
+        List<TkTypeRelation> relations;
+        if ("ALL".equals(mode)) {
+            relations = typeRelationMapper.selectList(new LambdaQueryWrapper<TkTypeRelation>()
+                    .eq(TkTypeRelation::getParentTypeId, parent.getTypeId())
+                    .eq(TkTypeRelation::getStatus, 1)
+                    .orderByAsc(TkTypeRelation::getSortNo)
+                    .orderByAsc(TkTypeRelation::getId));
+        } else {
+            List<Long> ids = new ArrayList<>();
+            Object configured = config.get("childValidationRelationIds");
+            if (configured instanceof Iterable) {
+                for (Object id : (Iterable<?>) configured) {
+                    try {
+                        ids.add(Long.valueOf(String.valueOf(id)));
+                    } catch (NumberFormatException ignored) {
+                        // 发布后关系被删或配置损坏时跳过无效 ID
+                    }
+                }
+            }
+            if (ids.isEmpty()) return;
+            Map<Long, TkTypeRelation> indexed = typeRelationMapper.selectBatchIds(ids).stream()
+                    .filter(r -> parent.getTypeId().equals(r.getParentTypeId()) && Integer.valueOf(1).equals(r.getStatus()))
+                    .collect(Collectors.toMap(TkTypeRelation::getId, r -> r));
+            relations = ids.stream().map(indexed::get).filter(Objects::nonNull).collect(Collectors.toList());
+        }
+
+        for (TkTypeRelation relation : relations) {
+            Long unfinished = ticketMapper.selectCount(new LambdaQueryWrapper<TkTicket>()
+                    .eq(TkTicket::getParentTicketId, parent.getId())
+                    .eq(TkTicket::getTypeRelationId, relation.getId())
+                    .in(TkTicket::getStatus, TicketService.STATUS_DRAFT, TicketService.STATUS_IN_APPROVAL));
+            if (unfinished != null && unfinished > 0) {
+                String name = relation.getRelationName();
+                if (!StringUtils.hasText(name)) {
+                    TkType childType = ticketTypeMapper.selectById(relation.getChildTypeId());
+                    name = childType == null ? "明细工单" : childType.getTypeName();
+                }
+                throw new BizException(name + "未全部关闭");
+            }
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void validateChildRequiredFields(Task task) {
+        Map<String, Object> config = BpmnEnhanceUtil.readTaskDetailConfig(
+                processModelXml(task.getProcessDefinitionId()), task.getTaskDefinitionKey());
+        Object rawConfigs = config.get("detailConfigs");
+        if (!(rawConfigs instanceof Iterable)) return;
+        TkTicket parent = ticketDataAccessService.ticketByProcess(task.getProcessInstanceId());
+        if (parent == null) return;
+        for (Object raw : (Iterable<?>) rawConfigs) {
+            if (!(raw instanceof Map)) continue;
+            Map<String, Object> detail = (Map<String, Object>) raw;
+            if (!Boolean.TRUE.equals(detail.get("visible"))) continue;
+            List<String> required = new ArrayList<>();
+            Object rawRequired = detail.get("requiredFields");
+            if (rawRequired instanceof Iterable) {
+                for (Object field : (Iterable<?>) rawRequired) required.add(String.valueOf(field));
+            }
+            if (required.isEmpty()) continue;
+            Long relationId;
+            try {
+                relationId = Long.valueOf(String.valueOf(detail.get("relationId")));
+            } catch (Exception e) {
+                continue;
+            }
+            TkTypeRelation relation = typeRelationMapper.selectById(relationId);
+            if (relation == null || !parent.getTypeId().equals(relation.getParentTypeId())) continue;
+            List<TkTicket> children = ticketMapper.selectList(new LambdaQueryWrapper<TkTicket>()
+                    .eq(TkTicket::getParentTicketId, parent.getId())
+                    .eq(TkTicket::getTypeRelationId, relationId));
+            for (TkTicket child : children) {
+                Map<String, Object> data = child.getFormData() == null
+                        ? Collections.emptyMap() : child.getFormData();
+                Optional<String> missing = required.stream().filter(f -> isBlankValue(data.get(f))).findFirst();
+                if (missing.isPresent()) {
+                    String name = StringUtils.hasText(relation.getRelationName())
+                            ? relation.getRelationName() : "明细工单";
+                    throw new BizException(name + "存在未填写的必填字段：" + missing.get());
+                }
+            }
+        }
+    }
+
+    /**
+     * 明细条数下限：节点填了大于 0 的值就以节点为准，否则用明细关系上的默认值。
+     * 上限在新增明细时就已经拦住，这里只需要补下限。
+     */
+    @SuppressWarnings("unchecked")
+    private void validateChildRowCounts(Task task) {
+        Map<String, Object> config = BpmnEnhanceUtil.readTaskDetailConfig(
+                processModelXml(task.getProcessDefinitionId()), task.getTaskDefinitionKey());
+        Object rawConfigs = config.get("detailConfigs");
+        if (!(rawConfigs instanceof Iterable)) return;
+        TkTicket parent = ticketDataAccessService.ticketByProcess(task.getProcessInstanceId());
+        if (parent == null) return;
+        for (Object raw : (Iterable<?>) rawConfigs) {
+            if (!(raw instanceof Map)) continue;
+            Map<String, Object> detail = (Map<String, Object>) raw;
+            if (!Boolean.TRUE.equals(detail.get("visible"))) continue;
+            Long relationId;
+            try {
+                relationId = Long.valueOf(String.valueOf(detail.get("relationId")));
+            } catch (Exception e) {
+                continue;
+            }
+            TkTypeRelation relation = typeRelationMapper.selectById(relationId);
+            if (relation == null || !parent.getTypeId().equals(relation.getParentTypeId())) continue;
+            int min = intValue(detail.get("minRows"));
+            if (min <= 0) min = relation.getMinRows() == null ? 0 : relation.getMinRows();
+            if (min <= 0) continue;
+            Long count = ticketMapper.selectCount(new LambdaQueryWrapper<TkTicket>()
+                    .eq(TkTicket::getParentTicketId, parent.getId())
+                    .eq(TkTicket::getTypeRelationId, relationId)
+                    .ne(TkTicket::getStatus, TicketService.STATUS_CANCELLED));
+            if (count == null || count < min) {
+                String name = StringUtils.hasText(relation.getRelationName())
+                        ? relation.getRelationName() : "明细工单";
+                throw new BizException(name + "至少需要 " + min + " 条");
+            }
+        }
+    }
+
+    private int intValue(Object value) {
+        if (value instanceof Number) return ((Number) value).intValue();
+        try {
+            return value == null ? 0 : Integer.parseInt(String.valueOf(value).trim());
+        } catch (NumberFormatException e) {
+            return 0;
         }
     }
 

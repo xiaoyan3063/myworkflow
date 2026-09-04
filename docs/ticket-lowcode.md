@@ -31,7 +31,7 @@
 | `DRAFT` | 草稿 | 创建/保存 | 能 |
 | `IN_APPROVAL` | 审批中 | 提交成功 | 否（流程内「发起人重新提交」除外，那是审批待办） |
 | `APPROVED` | 已通过 | 流程结束且通过 | 否 |
-| `REJECTED` | 已驳回（流程已终止） | 驳回并终止 | 能，改完可再次提交 |
+| `REJECTED` | 已驳回（流程已终止） | 驳回并终止 | 否，属于最终关闭状态 |
 | `CANCELLED` | 已撤销 | 发起人/管理员撤销 | 否 |
 
 流程侧仍用现有：`RUNNING` / `COMPLETED` / `REJECTED` / `CANCELLED`。列表不要直接展示流程英文状态。
@@ -168,8 +168,8 @@
 
 | 位置 | 做什么 |
 |------|--------|
-| `TicketService.submit` | 仅 `DRAFT` / 终止后的 `REJECTED` 可提交。调现有 `start`：`processKey` 来自类型、`businessKey=ticket_no`、`formData`、当前登录用户。成功后写 `process_inst_id`，`status=IN_APPROVAL`。与 `start` 同一事务，失败工单不变审批中。 |
-| `TicketService.updateDraft` | `IN_APPROVAL` / `APPROVED` 禁止改业务字段；`REJECTED` 可改后再提交。 |
+| `TicketService.submit` | 仅 `DRAFT` 可提交。调现有 `start`：`processKey` 来自类型、`businessKey=ticket_no`、`formData`、当前登录用户。成功后写 `process_inst_id`，`status=IN_APPROVAL`。与 `start` 同一事务，失败工单仍为草稿。 |
+| `TicketService.updateDraft` | 仅 `DRAFT` 和流程内「发起人重新提交」节点允许改业务字段；`REJECTED` 是最终状态，不能修改后再提交。 |
 | `TicketService.ticketPage` / `ticketDetail` | 补 `currentApprover`（复用 `ProcessRuntimeService.currentApprovers`）。 |
 | `POST /ticket/tickets/{id}/submit` | 提交入口。开放 API 不循环调用。 |
 | `ProcessRuntimeService.refreshInstanceStatus` | 实例走完 `COMPLETED` 时回调。 |
@@ -184,7 +184,7 @@
 2. 用 `zhangsan` 建草稿、保存、提交。工单应变为「审批中」，出现 `process_inst_id`；`wf_process_instance_ext.business_key` 等于工单号。列表「当前审批人」有人。
 3. 打开工单详情：表单只读，右侧有 `ApprovalTimeline`。此时编辑按钮应不可用。
 4. 用经理账号在待办通过：流程结束后工单变为「已通过」，轨迹显示结束。
-5. 另开一张工单提交，待办里选**驳回并终止**（不要选回退节点）：工单变为「已驳回」，可再编辑并再次提交。
+5. 另开一张工单提交，待办里选**驳回并终止**（不要选回退节点）：工单变为「已驳回」，不可再编辑或再次提交。
 6. 再开一张，驳回并**回退到发起人**：流程仍在跑，工单仍是「审批中」，不变成已驳回。发起人在待办里重新提交即可，不要再点工单「提交」（避免叠第二实例）。
 7. 菜单「发起审批」走原来的请假单，不应报错，日志可出现 `no ticket for businessKey=... skip writeback`。
 
@@ -211,7 +211,7 @@
 - `status` / `ticket_no` / `title` / `createTime` 走主列；扩展字段 `form_data->>'key'`（字段名必须是 `[a-zA-Z][a-zA-Z0-9_]*`）。
 - 分页仍是 `PageResult`。
 - 状态用 `TICKET_STATUS`（草稿/审批中/已通过/已驳回），不和流程 `RUNNING` 混用。
-- 行按钮：查看、编辑（仅 DRAFT/REJECTED）、提交、删除（草稿可在列表删除；发起人重新提交状态可在详情删除）。
+- 行按钮：查看、编辑（仅 DRAFT）、提交（仅 DRAFT）、删除（草稿可在列表删除；发起人重新提交状态可在详情删除）。
 - 人员字段（`user` / `users`）存的是用户 id，列表按 `GET /system/users/by-ids` 批量换成人名再渲染，缓存在 `utils/userNames.ts`。选人下拉的 `/users/simple` 有 50 条上限，已选的人不在里面时同样按 id 补一条选项，避免只读详情露出数字。
 
 ### 配置 JSON 示例
@@ -271,7 +271,7 @@ LIMIT 10 OFFSET 0;
 - 打开：工单类型 → **配置详情**，路由 `/ticket-types/{id}/detail`。
 - 运行时：列表「查看」仍进 `/tickets/{typeCode}/{id}`，按 `sections` 分组渲染。
 - `showTimeline=true` 且有 `process_inst_id` 时右侧展示 `ApprovalTimeline`。
-- 可编：仅 `DRAFT` / `REJECTED`（表单字段）。`IN_APPROVAL` / `APPROVED` 全只读。新建草稿不再填写主表「标题」，后端默认写成「类型名 + 工单号」，给待办/流程实例摘要用。列表和详情仍可通过配置展示该列。
+- 可编：仅 `DRAFT` 和流程内「发起人重新提交」节点（表单字段）。`IN_APPROVAL` / `APPROVED` / `REJECTED` 全只读。新建草稿不再填写主表「标题」，后端默认写成「类型名 + 工单号」，给待办/流程实例摘要用。列表和详情仍可通过配置展示该列。
 - `actions`：`save` / `submit` / `cancel` 只控制是否露出按钮，能不能点仍看工单状态。新建/编辑弹窗继续用 `TicketForm`。
 
 ### schema 示例
@@ -415,6 +415,24 @@ LIMIT 10 OFFSET 0;
 2. 不同部门用户分别发起，确认任务只分给审批角色中与发起人同部门的成员。依次验证上级部门、同部门及上级部门和固定指定部门。
 3. 临时移除所有匹配成员，上一节点提交应提示找不到审批人且待办仍停在原节点；补回成员后再次提交成功。
 4. 给审批人只保留弱菜单、数据范围为 `SELF`，审批别人发起的工单：待办可见，详情字段为空且按钮不可用。把其用户角色改为可覆盖发起人的 `DEPT` 或 `ALL`，刷新页面后字段和办理按钮恢复。
+
+## 独立明细工单与子流程
+
+- 明细复用 `tk_ticket` 存储，通过 `type_id` 使用自己的表单、字段、编号和流程；`parent_ticket_id` 指向主单，`type_relation_id` 区分同一主单下的多种明细。
+- `tk_type_relation` 配置主类型与明细类型、显示名、关系编码、排序、是否级联删除、条数范围，以及是否在主单发起时校验下限。一个主类型可以配置多种明细；关系已有数据后只能停用，不能物理删除。
+- 明细默认创建为 `DRAFT`，必须在主单子表中手动点击「提交」才启动该明细类型绑定的子流程。驳回并终止后是 `REJECTED` 最终状态，不允许再次提交。
+- 主单子表里只能改 `DRAFT` 明细。明细一提交就交给自己的子流程：后续修改只能由明细当前处理人在明细详情页进行，且仅限该子流程节点的可填字段，主单节点的明细列白名单管不到它。
+- 主流程用户任务的 `documentation` 增加 `detailConfigs`：
+  - 按明细种类控制本节点是否显示、是否允许追加、修改和删除草稿。
+  - `writableFields` / `requiredFields` 控制该节点可改和必填的明细列；服务端按白名单合并，不能越权改其它列。
+  - 未到达节点配置的明细种类按阶段隐藏；走到后保持只读展示。
+  - `minRows` / `maxRows` 限制条数，`0` 表示沿用明细关系上的设置，关系上也是 `0` 表示不限。
+  - 设计器不会因为取消勾选而清掉其它配置，重新勾回来原来的列白名单和条数还在；服务端读取时统一归一：本节点不显示的明细一律没有追加、修改、删除权限，既不能追加也不能修改时列白名单按空处理，必填列和条数下限也不再校验。
+- 条数校验：上限在新增明细时拦截（前端同时置灰「新增明细」按钮），发起阶段同样生效。下限默认只在审批节点点「同意」时校验，取值按「节点值优先、否则用关系值」。关系勾了 `check_min_on_start` 时，主单发起提交也会按关系下限拦截。`CANCELLED` 的明细不计入条数。
+- 同意前关闭校验使用 `childValidationMode`：`NONE` 不校验，`ALL` 校验该主类型全部启用明细关系，`SELECTED` 校验设计器多选的关系。每种仍检查该种类全部明细行。
+- `APPROVED`、`REJECTED`（驳回并终止）、`CANCELLED` 算关闭；`DRAFT`、`IN_APPROVAL`（包括退回发起人或指定节点）算未关闭。按关系排序逐种执行 EXISTS 查询，第一种未关闭就返回「{明细类型}未全部关闭」，不继续查其它种类。
+- 新增、修改、提交明细与主节点同意都先锁主单，避免关闭校验刚通过时并发产生或提交新的未关闭明细。
+- 删除主单时：`cascade_delete=1` 的子单先终止活动子流程再软删除；非级联关系只清空父单和关系引用，子单保留。
 
 ## PostgreSQL
 

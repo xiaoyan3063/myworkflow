@@ -7,6 +7,7 @@ import com.myworkflow.module.ticket.entity.TkFormUi;
 import com.myworkflow.module.ticket.entity.TkDetailUi;
 import com.myworkflow.module.ticket.entity.TkListUi;
 import com.myworkflow.module.ticket.entity.TkType;
+import com.myworkflow.module.ticket.entity.TkTypeRelation;
 import com.myworkflow.module.ticket.service.TicketService;
 import com.myworkflow.security.RequiresPerm;
 import io.swagger.annotations.Api;
@@ -56,6 +57,29 @@ public class TicketTypeController {
     @PostMapping
     public R<TkType> save(@RequestBody TkType type) {
         return R.ok(ticketService.saveType(type));
+    }
+
+    @ApiOperation("主类型配置的明细关系")
+    @GetMapping("/{id}/relations")
+    public R<List<TkTypeRelation>> relations(@PathVariable Long id,
+                                              @RequestParam(defaultValue = "false") boolean enabledOnly) {
+        return R.ok(ticketService.typeRelations(id, enabledOnly));
+    }
+
+    @ApiOperation("保存明细关系")
+    @RequiresPerm("ticket:type:save")
+    @PostMapping("/{id}/relations")
+    public R<TkTypeRelation> saveRelation(@PathVariable Long id,
+                                           @RequestBody TkTypeRelation relation) {
+        return R.ok(ticketService.saveTypeRelation(id, relation));
+    }
+
+    @ApiOperation("删除未使用的明细关系")
+    @RequiresPerm("ticket:type:save")
+    @DeleteMapping("/{id}/relations/{relationId}")
+    public R<Void> deleteRelation(@PathVariable Long id, @PathVariable Long relationId) {
+        ticketService.deleteTypeRelation(id, relationId);
+        return R.ok();
     }
 
     @ApiOperation("删除类型")

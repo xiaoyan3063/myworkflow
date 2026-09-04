@@ -130,6 +130,63 @@ public final class BpmnEnhanceUtil {
         return result;
     }
 
+    /** 读取节点上的工单明细配置，返回值可直接交给 Jackson 输出。 */
+    public static Map<String, Object> readTaskDetailConfig(String xml, String activityId) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("detailConfigs", new ArrayList<>());
+        result.put("childValidationMode", "NONE");
+        result.put("childValidationRelationIds", new ArrayList<>());
+        if (xml == null || xml.isEmpty() || activityId == null || activityId.isEmpty()) {
+            return result;
+        }
+        try {
+            for (Element task : userTasks(parse(xml))) {
+                if (!activityId.equals(task.getAttribute("id"))) continue;
+                JSONObject json = configJson(task);
+                if (json == null) return result;
+                Object details = json.get("detailConfigs");
+                if (details != null) result.put("detailConfigs", details);
+                result.put("childValidationMode", json.getStr("childValidationMode", "NONE"));
+                result.put("childValidationRelationIds",
+                        stringList(json.get("childValidationRelationIds")));
+                return result;
+            }
+        } catch (Exception ignored) {
+            // 损坏配置按不开放明细编辑、也不校验处理
+        }
+        return result;
+    }
+
+    /** 节点ID -> 本节点配置显示的明细关系ID。 */
+    public static Map<String, List<String>> readTaskDetailRelationsByActivity(String xml) {
+        Map<String, List<String>> result = new LinkedHashMap<>();
+        if (xml == null || xml.isEmpty()) return result;
+        try {
+            for (Element task : userTasks(parse(xml))) {
+                String id = task.getAttribute("id");
+                JSONObject json = configJson(task);
+                if (id == null || id.isEmpty() || json == null) continue;
+                List<String> ids = new ArrayList<>();
+                Object raw = json.get("detailConfigs");
+                if (raw instanceof Iterable) {
+                    for (Object item : (Iterable<?>) raw) {
+                        JSONObject detail = item instanceof JSONObject
+                                ? (JSONObject) item : JSONUtil.parseObj(item);
+                        String relationId = detail.getStr("relationId");
+                        if (relationId != null && !relationId.isEmpty()
+                                && detail.getBool("visible", true)) {
+                            ids.add(relationId);
+                        }
+                    }
+                }
+                if (!ids.isEmpty()) result.put(id, ids);
+            }
+        } catch (Exception ignored) {
+            // 老流程没有明细配置
+        }
+        return result;
+    }
+
     /**
      * 读取全部用户任务的可填字段，返回 节点ID -> 字段列表。
      * 决定字段归属哪个节点：没有归属的字段属于发起环节，归属节点未走到的字段先不展示。
@@ -311,12 +368,20 @@ public final class BpmnEnhanceUtil {
             List<String> writable = stringList(obj.get("writableFields"));
             List<String> required = stringList(obj.get("requiredFields"));
             required.retainAll(writable);
-            if (writable.isEmpty()) {
+            Object detailConfigs = obj.get("detailConfigs");
+            String validationMode = obj.getStr("childValidationMode", "NONE");
+            List<String> validationIds = stringList(obj.get("childValidationRelationIds"));
+            boolean hasDetailConfig = detailConfigs instanceof Iterable
+                    && ((Iterable<?>) detailConfigs).iterator().hasNext();
+            if (writable.isEmpty() && !hasDetailConfig && "NONE".equals(validationMode)) {
                 task.removeChild(config);
             } else {
                 JSONObject kept = new JSONObject();
                 kept.set("writableFields", writable);
                 kept.set("requiredFields", required);
+                kept.set("detailConfigs", detailConfigs == null ? new ArrayList<>() : detailConfigs);
+                kept.set("childValidationMode", validationMode);
+                kept.set("childValidationRelationIds", validationIds);
                 config.setTextContent(kept.toString());
             }
         } else if (hasOwnAssignment(task)) {

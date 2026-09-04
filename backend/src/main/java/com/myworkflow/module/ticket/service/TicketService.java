@@ -18,12 +18,14 @@ import com.myworkflow.module.ticket.entity.TkFormUi;
 import com.myworkflow.module.ticket.entity.TkListUi;
 import com.myworkflow.module.ticket.entity.TkTicket;
 import com.myworkflow.module.ticket.entity.TkType;
+import com.myworkflow.module.ticket.entity.TkTypeRelation;
 import com.myworkflow.module.ticket.mapper.TkDetailUiMapper;
 import com.myworkflow.module.ticket.mapper.TkFieldMapper;
 import com.myworkflow.module.ticket.mapper.TkFormUiMapper;
 import com.myworkflow.module.ticket.mapper.TkListUiMapper;
 import com.myworkflow.module.ticket.mapper.TkTicketMapper;
 import com.myworkflow.module.ticket.mapper.TkTypeMapper;
+import com.myworkflow.module.ticket.mapper.TkTypeRelationMapper;
 import com.myworkflow.security.PermissionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -38,6 +40,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 
@@ -59,6 +62,7 @@ public class TicketService {
     private final TkListUiMapper listUiMapper;
     private final TkDetailUiMapper detailUiMapper;
     private final TkTicketMapper ticketMapper;
+    private final TkTypeRelationMapper typeRelationMapper;
     private final SysUserMapper userMapper;
     private final WfProcessDefMapper processDefMapper;
     private final ProcessRuntimeService processRuntimeService;
@@ -91,6 +95,84 @@ public class TicketService {
             throw new BizException("工单类型不存在");
         }
         return type;
+    }
+
+    public List<TkTypeRelation> typeRelations(Long parentTypeId, boolean enabledOnly) {
+        typeDetail(parentTypeId);
+        List<TkTypeRelation> relations = typeRelationMapper.selectList(
+                new LambdaQueryWrapper<TkTypeRelation>()
+                        .eq(TkTypeRelation::getParentTypeId, parentTypeId)
+                        .eq(enabledOnly, TkTypeRelation::getStatus, 1)
+                        .orderByAsc(TkTypeRelation::getSortNo)
+                        .orderByAsc(TkTypeRelation::getId));
+        for (TkTypeRelation relation : relations) {
+            TkType child = typeMapper.selectById(relation.getChildTypeId());
+            if (child != null) {
+                relation.setChildTypeCode(child.getTypeCode());
+                relation.setChildTypeName(child.getTypeName());
+                relation.setChildProcessKey(child.getProcessKey());
+            }
+        }
+        return relations;
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public TkTypeRelation saveTypeRelation(Long parentTypeId, TkTypeRelation relation) {
+        TkType parent = typeDetail(parentTypeId);
+        TkType child = typeDetail(relation.getChildTypeId());
+        if (parent.getId().equals(child.getId())) {
+            throw new BizException("主类型不能把自己配置为明细类型");
+        }
+        if (!StringUtils.hasText(relation.getRelationCode())
+                || !StringUtils.hasText(relation.getRelationName())) {
+            throw new BizException("请填写关系编码和显示名称");
+        }
+        relation.setParentTypeId(parentTypeId);
+        relation.setRelationCode(relation.getRelationCode().trim());
+        relation.setRelationName(relation.getRelationName().trim());
+        Long duplicate = typeRelationMapper.selectCount(new LambdaQueryWrapper<TkTypeRelation>()
+                .eq(TkTypeRelation::getParentTypeId, parentTypeId)
+                .eq(TkTypeRelation::getRelationCode, relation.getRelationCode())
+                .ne(relation.getId() != null, TkTypeRelation::getId, relation.getId()));
+        if (duplicate != null && duplicate > 0) {
+            throw new BizException("同一主类型下关系编码不能重复");
+        }
+        if (relation.getCascadeDelete() == null) relation.setCascadeDelete(1);
+        if (relation.getMinRows() == null || relation.getMinRows() < 0) relation.setMinRows(0);
+        if (relation.getMaxRows() == null || relation.getMaxRows() < 0) relation.setMaxRows(0);
+        if (relation.getMaxRows() > 0 && relation.getMinRows() > relation.getMaxRows()) {
+            throw new BizException("明细条数下限不能大于上限");
+        }
+        if (relation.getCheckMinOnStart() == null) relation.setCheckMinOnStart(0);
+        if (Integer.valueOf(1).equals(relation.getCheckMinOnStart()) && relation.getMinRows() <= 0) {
+            throw new BizException("发起时校验下限需要先设置大于 0 的下限");
+        }
+        if (relation.getSortNo() == null) relation.setSortNo(0);
+        if (relation.getStatus() == null) relation.setStatus(1);
+        if (relation.getId() == null) {
+            typeRelationMapper.insert(relation);
+        } else {
+            TkTypeRelation stored = typeRelationMapper.selectById(relation.getId());
+            if (stored == null || !parentTypeId.equals(stored.getParentTypeId())) {
+                throw new BizException("明细关系不存在");
+            }
+            typeRelationMapper.updateById(relation);
+        }
+        return relation;
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public void deleteTypeRelation(Long parentTypeId, Long relationId) {
+        TkTypeRelation relation = typeRelationMapper.selectById(relationId);
+        if (relation == null || !parentTypeId.equals(relation.getParentTypeId())) {
+            throw new BizException("明细关系不存在");
+        }
+        Long children = ticketMapper.selectCount(new LambdaQueryWrapper<TkTicket>()
+                .eq(TkTicket::getTypeRelationId, relationId));
+        if (children != null && children > 0) {
+            throw new BizException("该关系下已有明细工单，不能删除，可将关系停用");
+        }
+        typeRelationMapper.deleteById(relationId);
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -136,6 +218,12 @@ public class TicketService {
         Long tickets = ticketMapper.selectCount(new LambdaQueryWrapper<TkTicket>().eq(TkTicket::getTypeId, id));
         if (tickets != null && tickets > 0) {
             throw new BizException("该类型下已有工单，不能删除");
+        }
+        Long relations = typeRelationMapper.selectCount(new LambdaQueryWrapper<TkTypeRelation>()
+                .and(w -> w.eq(TkTypeRelation::getParentTypeId, id)
+                        .or().eq(TkTypeRelation::getChildTypeId, id)));
+        if (relations != null && relations > 0) {
+            throw new BizException("该类型已配置为主表或明细类型，不能删除");
         }
         TkType type = typeMapper.selectById(id);
         String code = type == null ? null : type.getTypeCode();
@@ -436,9 +524,13 @@ public class TicketService {
             List<String> nodeFields = typeNodeFields(ticket.getTypeId());
             result.put("nodeFields", nodeFields);
             result.put("hiddenFields", nodeFields);
+            List<String> nodeRelations = typeNodeRelations(ticket.getTypeId());
+            result.put("nodeRelationIds", nodeRelations);
+            result.put("hiddenRelationIds", nodeRelations);
             return result;
         }
         result.putAll(processRuntimeService.fieldVisibility(ticket.getProcessInstId()));
+        result.putAll(processRuntimeService.detailVisibility(ticket.getProcessInstId()));
         Map<String, Object> task = processRuntimeService.myActiveTask(ticket.getProcessInstId());
         if (task != null) {
             result.putAll(task);
@@ -460,6 +552,16 @@ public class TicketService {
                 : processRuntimeService.designNodeFields(def.getBpmnXml());
     }
 
+    public List<String> typeNodeRelations(Long typeId) {
+        TkType type = typeDetail(typeId);
+        if (!StringUtils.hasText(type.getProcessKey())) return Collections.emptyList();
+        WfProcessDef def = processDefMapper.selectOne(new LambdaQueryWrapper<WfProcessDef>()
+                .eq(WfProcessDef::getProcessKey, type.getProcessKey())
+                .eq(WfProcessDef::getStatus, 1).last("LIMIT 1"));
+        return def == null ? Collections.emptyList()
+                : processRuntimeService.designNodeRelations(def.getBpmnXml());
+    }
+
     public TkTicket ticketByProcessInstance(String processInstanceId) {
         if (!StringUtils.hasText(processInstanceId)) {
             throw new BizException("缺少流程实例");
@@ -471,6 +573,287 @@ public class TicketService {
             throw new BizException("该流程实例未关联工单");
         }
         return ticketDetail(ticket.getId());
+    }
+
+    public List<Map<String, Object>> childGroups(Long parentTicketId) {
+        TkTicket parent = ticketDetail(parentTicketId);
+        boolean dataAccess = ticketDataAccessService.hasDataAccess(ticketMapper.selectById(parentTicketId));
+        Set<String> hidden = new HashSet<>();
+        if (StringUtils.hasText(parent.getProcessInstId())) {
+            hidden.addAll(processRuntimeService.detailVisibility(parent.getProcessInstId())
+                    .getOrDefault("hiddenRelationIds", Collections.emptyList()));
+        } else {
+            hidden.addAll(typeNodeRelations(parent.getTypeId()));
+        }
+        Map<String, Object> currentTask = StringUtils.hasText(parent.getProcessInstId())
+                ? processRuntimeService.myActiveTask(parent.getProcessInstId()) : null;
+        List<Map<String, Object>> groups = new ArrayList<>();
+        for (TkTypeRelation relation : typeRelations(parent.getTypeId(), true)) {
+            if (hidden.contains(String.valueOf(relation.getId()))) continue;
+            List<TkTicket> children = ticketMapper.selectList(new LambdaQueryWrapper<TkTicket>()
+                    .eq(TkTicket::getParentTicketId, parentTicketId)
+                    .eq(TkTicket::getTypeRelationId, relation.getId())
+                    .orderByAsc(TkTicket::getCreateTime));
+            if (!dataAccess) {
+                children.forEach(child -> child.setFormData(new HashMap<>()));
+            }
+            TkType childType = typeMapper.selectById(relation.getChildTypeId());
+            Map<String, Object> group = new LinkedHashMap<>();
+            group.put("relation", relation);
+            group.put("children", children);
+            group.put("fields", listFields(relation.getChildTypeId()));
+            TkFormUi form = getFormUi(relation.getChildTypeId(), true, null);
+            group.put("formSchema", form == null ? Collections.emptyMap() : form.getSchema());
+            group.put("hiddenFields", Collections.emptyList());
+            Map<String, Object> access = detailConfig(currentTask, relation.getId());
+            if (!StringUtils.hasText(parent.getProcessInstId())) {
+                List<String> hiddenChildFields = typeNodeFields(relation.getChildTypeId());
+                access.put("visible", true);
+                access.put("allowAppend", true);
+                access.put("allowEdit", true);
+                access.put("allowDelete", true);
+                access.put("writableFields", listFields(relation.getChildTypeId()).stream()
+                        .map(TkField::getFieldKey).filter(f -> !hiddenChildFields.contains(f))
+                        .collect(java.util.stream.Collectors.toList()));
+                access.put("requiredFields", listFields(relation.getChildTypeId()).stream()
+                        .filter(f -> Integer.valueOf(1).equals(f.getRequired()))
+                        .map(TkField::getFieldKey).filter(f -> !hiddenChildFields.contains(f))
+                        .collect(java.util.stream.Collectors.toList()));
+                group.put("hiddenFields", hiddenChildFields);
+            }
+            // 下限默认只在审批节点提示；关系勾了「发起时校验」时草稿阶段也显示
+            boolean showStartMin = Integer.valueOf(1).equals(relation.getCheckMinOnStart());
+            int minRows = StringUtils.hasText(parent.getProcessInstId()) || showStartMin
+                    ? effectiveRows(access, relation, false) : 0;
+            int maxRows = effectiveRows(access, relation, true);
+            access.put("minRows", minRows);
+            access.put("maxRows", maxRows);
+            access.put("rowCount", children.stream()
+                    .filter(child -> !STATUS_CANCELLED.equals(child.getStatus())).count());
+            group.put("access", access);
+            group.put("childType", childType);
+            groups.add(group);
+        }
+        return groups;
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public TkTicket createChildDraft(Long parentTicketId, Long relationId, Map<String, Object> formData) {
+        TkTicket parent = lockParent(parentTicketId);
+        assertTicketScope(parent);
+        if (!ticketDataAccessService.hasDataAccess(parent)) throw ticketDataAccessService.denied();
+        TkTypeRelation relation = requireRelation(parent, relationId);
+        Map<String, Object> access = childAccess(parent, relationId);
+        if (!Boolean.TRUE.equals(access.get("allowAppend"))) {
+            throw new BizException(403, "当前节点不允许新增该类明细");
+        }
+        int maxRows = effectiveRows(access, relation, true);
+        if (maxRows > 0 && childCount(parentTicketId, relationId) >= maxRows) {
+            throw new BizException(relationName(relation) + "最多允许 " + maxRows + " 条");
+        }
+        TkTicket request = new TkTicket();
+        request.setTypeId(relation.getChildTypeId());
+        Map<String, Object> filtered = filterChildFields(formData, access, parent);
+        validateChildRequired(filtered, access);
+        request.setFormData(filtered);
+        TkTicket child = createDraft(request);
+        child.setParentTicketId(parentTicketId);
+        child.setTypeRelationId(relationId);
+        ticketMapper.updateById(child);
+        return ticketDetail(child.getId());
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public TkTicket updateChild(Long parentTicketId, Long childId, Map<String, Object> formData) {
+        TkTicket parent = lockParent(parentTicketId);
+        assertTicketScope(parent);
+        if (!ticketDataAccessService.hasDataAccess(parent)) throw ticketDataAccessService.denied();
+        TkTicket child = requireChild(parentTicketId, childId);
+        requireRelation(parent, child.getTypeRelationId());
+        // 明细一旦提交就交给自己的子流程，只能由当前处理人在明细详情页按节点字段权限改
+        if (!STATUS_DRAFT.equals(child.getStatus())) {
+            throw new BizException("明细已提交，请在明细详情里由当前处理人修改本节点可填字段");
+        }
+        Map<String, Object> access = childAccess(parent, child.getTypeRelationId());
+        if (!Boolean.TRUE.equals(access.get("allowEdit"))) {
+            throw new BizException(403, "当前节点不允许修改该类明细");
+        }
+        Map<String, Object> incoming = filterChildFields(formData, access, parent);
+        Map<String, Object> merged = child.getFormData() == null
+                ? new HashMap<>() : new HashMap<>(child.getFormData());
+        merged.putAll(incoming);
+        validateChildRequired(merged, access);
+        child.setFormData(merged);
+        ticketMapper.updateById(child);
+        ticketFileService.bindFromFormData(child.getId(), merged);
+        return child;
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public void deleteChild(Long parentTicketId, Long childId) {
+        TkTicket parent = lockParent(parentTicketId);
+        assertTicketScope(parent);
+        if (!ticketDataAccessService.hasDataAccess(parent)) throw ticketDataAccessService.denied();
+        TkTicket child = requireChild(parentTicketId, childId);
+        Map<String, Object> access = childAccess(parent, child.getTypeRelationId());
+        if (!Boolean.TRUE.equals(access.get("allowDelete"))) {
+            throw new BizException(403, "当前节点不允许删除该类明细");
+        }
+        if (!STATUS_DRAFT.equals(child.getStatus())) {
+            throw new BizException("仅草稿明细可以单独删除");
+        }
+        ticketMapper.deleteById(childId);
+    }
+
+    private TkTicket lockParent(Long parentTicketId) {
+        TkTicket parent = ticketMapper.selectForUpdate(parentTicketId);
+        if (parent == null) throw new BizException("主工单不存在");
+        return parent;
+    }
+
+    private TkTicket requireChild(Long parentTicketId, Long childId) {
+        TkTicket child = ticketMapper.selectById(childId);
+        if (child == null || !parentTicketId.equals(child.getParentTicketId())) {
+            throw new BizException("明细工单不存在");
+        }
+        return child;
+    }
+
+    /** 节点上填了大于 0 的条数才覆盖明细关系上的默认值，0 一律表示沿用/不限 */
+    private int effectiveRows(Map<String, Object> access, TkTypeRelation relation, boolean max) {
+        int node = intOf(access == null ? null : access.get(max ? "maxRows" : "minRows"));
+        if (node > 0) return node;
+        Integer base = max ? relation.getMaxRows() : relation.getMinRows();
+        return base == null || base < 0 ? 0 : base;
+    }
+
+    private int intOf(Object value) {
+        if (value instanceof Number) return ((Number) value).intValue();
+        try {
+            return value == null ? 0 : Integer.parseInt(String.valueOf(value).trim());
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    /** 作废的明细不计入条数限制 */
+    private long childCount(Long parentTicketId, Long relationId) {
+        Long count = ticketMapper.selectCount(new LambdaQueryWrapper<TkTicket>()
+                .eq(TkTicket::getParentTicketId, parentTicketId)
+                .eq(TkTicket::getTypeRelationId, relationId)
+                .ne(TkTicket::getStatus, STATUS_CANCELLED));
+        return count == null ? 0 : count;
+    }
+
+    private String relationName(TkTypeRelation relation) {
+        if (StringUtils.hasText(relation.getRelationName())) return relation.getRelationName();
+        TkType childType = typeMapper.selectById(relation.getChildTypeId());
+        return childType == null ? "明细" : childType.getTypeName();
+    }
+
+    /** 仅关系勾了「发起时校验下限」的种类，在主单发起提交时拦截 */
+    private void validateRowsBeforeStart(TkTicket ticket) {
+        if (ticket.getParentTicketId() != null) return;
+        for (TkTypeRelation relation : typeRelations(ticket.getTypeId(), true)) {
+            if (!Integer.valueOf(1).equals(relation.getCheckMinOnStart())) continue;
+            Integer min = relation.getMinRows();
+            if (min == null || min <= 0) continue;
+            if (childCount(ticket.getId(), relation.getId()) < min) {
+                throw new BizException(relationName(relation) + "至少需要 " + min + " 条");
+            }
+        }
+    }
+
+    private TkTypeRelation requireRelation(TkTicket parent, Long relationId) {
+        TkTypeRelation relation = typeRelationMapper.selectById(relationId);
+        if (relation == null || !parent.getTypeId().equals(relation.getParentTypeId())
+                || !Integer.valueOf(1).equals(relation.getStatus())) {
+            throw new BizException("明细关系不存在或已停用");
+        }
+        return relation;
+    }
+
+    private Map<String, Object> childAccess(TkTicket parent, Long relationId) {
+        if (!StringUtils.hasText(parent.getProcessInstId()) && STATUS_DRAFT.equals(parent.getStatus())) {
+            Map<String, Object> all = new HashMap<>();
+            all.put("allowAppend", true);
+            all.put("allowEdit", true);
+            all.put("allowDelete", true);
+            Long childTypeId = requireRelation(parent, relationId).getChildTypeId();
+            List<String> hidden = typeNodeFields(childTypeId);
+            all.put("writableFields", listFields(childTypeId).stream().map(TkField::getFieldKey)
+                    .filter(f -> !hidden.contains(f)).collect(java.util.stream.Collectors.toList()));
+            all.put("requiredFields", listFields(childTypeId).stream()
+                    .filter(f -> Integer.valueOf(1).equals(f.getRequired()))
+                    .map(TkField::getFieldKey).filter(f -> !hidden.contains(f))
+                    .collect(java.util.stream.Collectors.toList()));
+            return all;
+        }
+        Map<String, Object> task = processRuntimeService.myTaskFieldConfig(parent.getProcessInstId());
+        return detailConfig(task, relationId);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> detailConfig(Map<String, Object> task, Long relationId) {
+        Map<String, Object> empty = new HashMap<>();
+        empty.put("visible", false);
+        empty.put("allowAppend", false);
+        empty.put("allowEdit", false);
+        empty.put("allowDelete", false);
+        empty.put("writableFields", Collections.emptyList());
+        empty.put("requiredFields", Collections.emptyList());
+        empty.put("minRows", 0);
+        empty.put("maxRows", 0);
+        if (task == null || !(task.get("detailConfigs") instanceof Iterable)) return empty;
+        for (Object raw : (Iterable<?>) task.get("detailConfigs")) {
+            if (!(raw instanceof Map)) continue;
+            Map<String, Object> config = (Map<String, Object>) raw;
+            if (String.valueOf(relationId).equals(String.valueOf(config.get("relationId")))) {
+                Map<String, Object> result = new HashMap<>(config);
+                // 设计器保留未勾选项的历史配置，本节点不显示的明细一律按无权限处理
+                if (!Boolean.TRUE.equals(result.get("visible"))) {
+                    result.put("allowAppend", false);
+                    result.put("allowEdit", false);
+                    result.put("allowDelete", false);
+                }
+                if (!Boolean.TRUE.equals(result.get("allowAppend"))
+                        && !Boolean.TRUE.equals(result.get("allowEdit"))) {
+                    result.put("writableFields", Collections.emptyList());
+                    result.put("requiredFields", Collections.emptyList());
+                }
+                return result;
+            }
+        }
+        return empty;
+    }
+
+    private Map<String, Object> filterChildFields(Map<String, Object> submitted,
+                                                   Map<String, Object> access, TkTicket parent) {
+        Map<String, Object> incoming = submitted == null ? Collections.emptyMap() : submitted;
+        Set<String> writable = new HashSet<>();
+        Object raw = access.get("writableFields");
+        if (raw instanceof Iterable) {
+            for (Object field : (Iterable<?>) raw) writable.add(String.valueOf(field));
+        }
+        List<String> forbidden = incoming.keySet().stream().filter(k -> !writable.contains(k))
+                .collect(java.util.stream.Collectors.toList());
+        if (!forbidden.isEmpty()) {
+            throw new BizException(403, "无权修改明细字段：" + String.join("、", forbidden));
+        }
+        return new HashMap<>(incoming);
+    }
+
+    private void validateChildRequired(Map<String, Object> data, Map<String, Object> access) {
+        Object raw = access.get("requiredFields");
+        if (!(raw instanceof Iterable)) return;
+        for (Object item : (Iterable<?>) raw) {
+            String field = String.valueOf(item);
+            Object value = data.get(field);
+            boolean blank = value == null
+                    || (value instanceof String && !StringUtils.hasText((String) value))
+                    || (value instanceof java.util.Collection && ((java.util.Collection<?>) value).isEmpty());
+            if (blank) throw new BizException("请填写明细必填字段：" + field);
+        }
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -510,7 +893,6 @@ public class TicketService {
         boolean resubmitting = STATUS_IN_APPROVAL.equals(ticket.getStatus())
                 && processRuntimeService.hasResubmitTask(ticket.getProcessInstId());
         if (!STATUS_DRAFT.equals(ticket.getStatus())
-                && !STATUS_REJECTED.equals(ticket.getStatus())
                 && !resubmitting) {
             throw new BizException("审批中或已结束的工单不能改业务字段");
         }
@@ -585,19 +967,56 @@ public class TicketService {
         if (resubmit) {
             processRuntimeService.cancelForTicketDeletion(ticket.getProcessInstId());
         }
+        List<TkTicket> children = ticketMapper.selectList(new LambdaQueryWrapper<TkTicket>()
+                .eq(TkTicket::getParentTicketId, id));
+        for (TkTicket child : children) {
+            TkTypeRelation relation = typeRelationMapper.selectById(child.getTypeRelationId());
+            if (relation != null && Integer.valueOf(1).equals(relation.getCascadeDelete())) {
+                if (STATUS_IN_APPROVAL.equals(child.getStatus()) && StringUtils.hasText(child.getProcessInstId())) {
+                    processRuntimeService.cancelForTicketDeletion(child.getProcessInstId());
+                }
+                ticketMapper.deleteById(child.getId());
+            } else {
+                child.setParentTicketId(null);
+                child.setTypeRelationId(null);
+                ticketMapper.updateById(child);
+            }
+        }
         ticketMapper.deleteById(id);
     }
 
     /**
      * 提交审批：先 start，成功才把工单改成审批中。同一事务，start 失败工单仍是草稿。
-     * 终止驳回后允许再提交（新开实例，businessKey 仍是 ticket_no）。
+     * 驳回并终止属于最终状态，不允许重新提交。
      */
     @Transactional(rollbackFor = Exception.class)
     public TkTicket submit(Long ticketId) {
-        TkTicket ticket = ticketDetail(ticketId);
-        if (!STATUS_DRAFT.equals(ticket.getStatus()) && !STATUS_REJECTED.equals(ticket.getStatus())) {
-            throw new BizException("仅草稿或已驳回（已终止）的工单可提交");
+        return submitLoaded(ticketDetail(ticketId));
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public TkTicket submitChild(Long parentTicketId, Long childId) {
+        TkTicket parent = lockParent(parentTicketId);
+        assertTicketScope(parent);
+        if (!ticketDataAccessService.hasDataAccess(parent)) throw ticketDataAccessService.denied();
+        TkTicket child = requireChild(parentTicketId, childId);
+        Map<String, Object> access = childAccess(parent, child.getTypeRelationId());
+        if (!Boolean.TRUE.equals(access.get("visible"))
+                && StringUtils.hasText(parent.getProcessInstId())) {
+            throw new BizException(403, "当前节点不能提交该类明细");
         }
+        return submitLoaded(child);
+    }
+
+    private TkTicket submitLoaded(TkTicket ticket) {
+        if (ticket.getParentTicketId() != null) {
+            // 与主节点关闭校验串行，避免校验刚通过时并发提交出新的未关闭明细
+            lockParent(ticket.getParentTicketId());
+        }
+        if (!STATUS_DRAFT.equals(ticket.getStatus())) {
+            throw new BizException("仅草稿工单可提交；驳回并终止的工单不能再次提交");
+        }
+        validateRowsBeforeStart(ticket);
         TkType type = typeDetail(ticket.getTypeId());
         if (!StringUtils.hasText(ticket.getTicketNo())) {
             ticket.setTicketNo(nextTicketNo(type));

@@ -77,11 +77,11 @@ const formData = ref<Record<string, any>>({})
 const formSchema = ref<any>({ fields: [], raw: [] })
 
 function canEdit(row: any) {
-  return row.status === 'DRAFT' || row.status === 'REJECTED'
+  return row.status === 'DRAFT'
 }
 
 function canSubmit(row: any) {
-  return row.status === 'DRAFT' || row.status === 'REJECTED'
+  return row.status === 'DRAFT'
 }
 
 async function loadSchema(id: string) {

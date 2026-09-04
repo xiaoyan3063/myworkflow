@@ -221,6 +221,79 @@
               <div class="tip">勾选的字段仅当前节点处理人可编辑；未勾选字段仍只读显示。</div>
             </el-form-item>
 
+            <el-form-item v-if="meta.ticketTypeId && detailRelations.length" label="本节点明细权限">
+              <div class="detail-configs">
+                <div v-for="r in detailRelations" :key="r.id" class="detail-config">
+                  <el-checkbox
+                    :model-value="detailConfig(r.id).visible"
+                    @change="(v: boolean) => updateDetailConfig(r.id, 'visible', v)"
+                  >{{ r.relationName }}</el-checkbox>
+                  <template v-if="detailConfig(r.id).visible">
+                    <div class="detail-actions">
+                      <el-checkbox :model-value="detailConfig(r.id).allowAppend" @change="(v: boolean) => updateDetailConfig(r.id, 'allowAppend', v)">允许追加</el-checkbox>
+                      <el-checkbox :model-value="detailConfig(r.id).allowEdit" @change="(v: boolean) => updateDetailConfig(r.id, 'allowEdit', v)">允许修改</el-checkbox>
+                      <el-checkbox :model-value="detailConfig(r.id).allowDelete" @change="(v: boolean) => updateDetailConfig(r.id, 'allowDelete', v)">允许删草稿</el-checkbox>
+                    </div>
+                    <div class="detail-rows">
+                      <span>条数</span>
+                      <span>下限</span>
+                      <el-input-number
+                        :model-value="detailConfig(r.id).minRows"
+                        :min="0"
+                        :controls="false"
+                        size="small"
+                        style="width: 72px"
+                        @change="(v: number) => updateDetailConfig(r.id, 'minRows', v)"
+                      />
+                      <span>上限</span>
+                      <el-input-number
+                        :model-value="detailConfig(r.id).maxRows"
+                        :min="0"
+                        :controls="false"
+                        size="small"
+                        style="width: 72px"
+                        @change="(v: number) => updateDetailConfig(r.id, 'maxRows', v)"
+                      />
+                      <span class="tip">0 表示沿用关系设置；关系上也是 0 则不限。至少 1 条填下限 1、上限 0</span>
+                    </div>
+                    <div v-if="detailConfig(r.id).allowAppend || detailConfig(r.id).allowEdit" class="detail-fields">
+                      <div v-for="f in relationFields(r.id)" :key="f.fieldKey" class="node-field-row">
+                        <el-checkbox
+                          :model-value="detailConfig(r.id).writableFields.includes(f.fieldKey)"
+                          @change="(v: boolean) => toggleDetailField(r.id, f.fieldKey, v, false)"
+                        >{{ f.title }}</el-checkbox>
+                        <el-checkbox
+                          :model-value="detailConfig(r.id).requiredFields.includes(f.fieldKey)"
+                          :disabled="!detailConfig(r.id).writableFields.includes(f.fieldKey)"
+                          @change="(v: boolean) => toggleDetailField(r.id, f.fieldKey, v, true)"
+                        >必填</el-checkbox>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </el-form-item>
+
+            <el-form-item v-if="meta.ticketTypeId && detailRelations.length" label="同意前明细关闭校验">
+              <el-radio-group v-model="nodeForm.childValidationMode" @change="applyTask">
+                <el-radio-button value="NONE">不校验</el-radio-button>
+                <el-radio-button value="ALL">所有类型</el-radio-button>
+                <el-radio-button value="SELECTED">指定类型</el-radio-button>
+              </el-radio-group>
+              <el-select
+                v-if="nodeForm.childValidationMode === 'SELECTED'"
+                v-model="nodeForm.childValidationRelationIds"
+                multiple
+                collapse-tags
+                style="width: 100%; margin-top: 8px"
+                placeholder="可多选明细种类"
+                @change="applyTask"
+              >
+                <el-option v-for="r in detailRelations" :key="r.id" :label="r.relationName" :value="String(r.id)" />
+              </el-select>
+              <div class="tip">按配置顺序检查，发现第一种存在草稿或审批中的明细即停止并提示。</div>
+            </el-form-item>
+
             <div class="summary" :class="{ warn: !taskConfigured }">
               {{ taskSummary }}
             </div>
@@ -567,6 +640,8 @@ const users = ref<any[]>([])
 const roles = ref<any[]>([])
 const deptTree = ref<any[]>([])
 const formFields = ref<any[]>([])
+const detailRelations = ref<any[]>([])
+const detailFieldMap = ref<Record<string, any[]>>({})
 /**
  * 必须用 shallowRef + markRaw：ref() 会把 bpmn-js 元素深度包成响应式 Proxy，
  * 顺着 businessObject / parent / children 递归代理整张模型图。
@@ -587,6 +662,9 @@ const nodeForm = reactive({
   dueHours: 0,
   writableFields: [] as string[],
   requiredFields: [] as string[],
+  detailConfigs: [] as any[],
+  childValidationMode: 'NONE',
+  childValidationRelationIds: [] as string[],
   condition: '',
 })
 
@@ -828,9 +906,14 @@ async function importDiagram(xml?: string) {
 
 async function loadFormFields() {
   formFields.value = []
+  detailRelations.value = []
+  detailFieldMap.value = {}
   if (meta.ticketTypeId) {
     try {
-      const res: any = await http.get(`/ticket/types/${meta.ticketTypeId}/fields`)
+      const [res, relationRes]: any[] = await Promise.all([
+        http.get(`/ticket/types/${meta.ticketTypeId}/fields`),
+        http.get(`/ticket/types/${meta.ticketTypeId}/relations`, { params: { enabledOnly: true } }),
+      ])
       formFields.value = (res.data || []).map((f: any) => {
         let options: any[] = []
         if (f.optionsJson) {
@@ -847,8 +930,19 @@ async function loadFormFields() {
           options,
         }
       })
+      detailRelations.value = relationRes.data || []
+      const fieldResults = await Promise.all(
+        detailRelations.value.map((r: any) => http.get(`/ticket/types/${r.childTypeId}/fields`)),
+      )
+      const mapped: Record<string, any[]> = {}
+      detailRelations.value.forEach((r: any, i: number) => {
+        mapped[String(r.id)] = fieldResults[i]?.data || []
+      })
+      detailFieldMap.value = mapped
     } catch {
       formFields.value = []
+      detailRelations.value = []
+      detailFieldMap.value = {}
     }
     return
   }
@@ -895,6 +989,23 @@ function applySelection(element: any) {
   nodeForm.requiredFields = Array.isArray(cfg.requiredFields)
     ? cfg.requiredFields.filter((f: string) => nodeForm.writableFields.includes(f))
     : []
+  nodeForm.detailConfigs = Array.isArray(cfg.detailConfigs)
+    ? cfg.detailConfigs.map((item: any) => ({
+        visible: true,
+        allowAppend: false,
+        allowEdit: false,
+        allowDelete: false,
+        writableFields: [],
+        requiredFields: [],
+        minRows: 0,
+        maxRows: 0,
+        ...item,
+        relationId: String(item.relationId),
+      }))
+    : []
+  nodeForm.childValidationMode = cfg.childValidationMode || 'NONE'
+  nodeForm.childValidationRelationIds = Array.isArray(cfg.childValidationRelationIds)
+    ? cfg.childValidationRelationIds.map(String) : []
   nodeForm.condition = bo.conditionExpression?.body || ''
 
   if (/Gateway$/.test(element.type)) {
@@ -976,6 +1087,59 @@ function toggleRequiredField(field: string, checked: boolean) {
   applyTask()
 }
 
+function relationFields(relationId: any) {
+  return detailFieldMap.value[String(relationId)] || []
+}
+
+function detailConfig(relationId: any) {
+  const id = String(relationId)
+  return nodeForm.detailConfigs.find((item: any) => String(item.relationId) === id) || {
+      relationId: id,
+      visible: false,
+      allowAppend: false,
+      allowEdit: false,
+      allowDelete: false,
+      writableFields: [],
+      requiredFields: [],
+      minRows: 0,
+      maxRows: 0,
+  }
+}
+
+function ensureDetailConfig(relationId: any) {
+  const existing = nodeForm.detailConfigs.find((item: any) => String(item.relationId) === String(relationId))
+  if (existing) return existing
+  const config = detailConfig(relationId)
+  nodeForm.detailConfigs.push(config)
+  return config
+}
+
+/**
+ * 只改当前这一项，不联动清空其它勾选：取消显示或取消修改后重新勾回来，
+ * 之前配好的列白名单和条数还在。不显示的明细由服务端统一按无权限处理。
+ */
+function updateDetailConfig(relationId: any, field: string, value: boolean | number) {
+  const config = ensureDetailConfig(relationId)
+  config[field] = field === 'minRows' || field === 'maxRows' ? Math.max(0, Number(value) || 0) : value
+  applyTask()
+}
+
+function toggleDetailField(relationId: any, field: string, checked: boolean, required: boolean) {
+  const config = ensureDetailConfig(relationId)
+  if (required) {
+    if (!config.writableFields.includes(field)) return
+    config.requiredFields = checked
+      ? [...new Set([...config.requiredFields, field])]
+      : config.requiredFields.filter((item: string) => item !== field)
+  } else {
+    config.writableFields = checked
+      ? [...new Set([...config.writableFields, field])]
+      : config.writableFields.filter((item: string) => item !== field)
+    if (!checked) config.requiredFields = config.requiredFields.filter((item: string) => item !== field)
+  }
+  applyTask()
+}
+
 function applyTask() {
   const element = selected.value
   if (!element || !modeler) return
@@ -993,6 +1157,10 @@ function applyTask() {
       dueHours: nodeForm.dueHours,
       writableFields: nodeForm.writableFields,
       requiredFields: nodeForm.requiredFields,
+      detailConfigs: nodeForm.detailConfigs,
+      childValidationMode: nodeForm.childValidationMode,
+      childValidationRelationIds: nodeForm.childValidationMode === 'SELECTED'
+        ? nodeForm.childValidationRelationIds : [],
     }
     const documentation = moddle.create('bpmn:Documentation', { text: JSON.stringify(cfg) })
     documentation.$parent = element.businessObject
@@ -1182,6 +1350,22 @@ function validate(): string[] {
         } else if (!formFields.value.some((f) => f.field === cfg.assigneeValue)) {
           problems.push(`审批节点「${el.businessObject.name || el.id}」引用的人员字段「${cfg.assigneeValue}」已不存在`)
         }
+      }
+      const badRows = (cfg.detailConfigs || []).some(
+        (item: any) => Number(item.maxRows) > 0 && Number(item.minRows) > Number(item.maxRows),
+      )
+      if (badRows) {
+        problems.push(`审批节点「${el.businessObject.name || el.id}」的明细条数下限大于上限`)
+      }
+      if (cfg.childValidationMode === 'SELECTED'
+          && (!Array.isArray(cfg.childValidationRelationIds) || !cfg.childValidationRelationIds.length)) {
+        problems.push(`审批节点「${el.businessObject.name || el.id}」选择了指定明细校验，但还没有选择明细种类`)
+      }
+      const relationIds = new Set(detailRelations.value.map((r: any) => String(r.id)))
+      const invalidRelations = (cfg.childValidationRelationIds || [])
+        .map(String).filter((id: string) => !relationIds.has(id))
+      if (invalidRelations.length) {
+        problems.push(`审批节点「${el.businessObject.name || el.id}」引用了已删除或停用的明细关系`)
       }
     }
     if (/ExclusiveGateway$/.test(el.type)) {
@@ -1374,6 +1558,12 @@ function saveAndDeploy() {
   top: 0;
   z-index: 2;
 }
+.detail-configs { width: 100%; display: flex; flex-direction: column; gap: 8px; }
+.detail-config { padding: 8px; border: 1px solid var(--el-border-color-lighter); border-radius: 6px; }
+.detail-actions { padding-left: 22px; }
+.detail-rows { display: flex; align-items: center; gap: 6px; padding-left: 22px; margin-top: 4px; }
+.detail-rows .tip { margin: 0; }
+.detail-fields { margin: 6px 0 0 22px; padding-top: 6px; border-top: 1px dashed var(--el-border-color); }
 .props-title .badge {
   display: inline-block;
   padding: 3px 10px;

@@ -11,6 +11,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
+import java.util.List;
 
 @Api(tags = "工单")
 @RestController
@@ -57,6 +58,39 @@ public class TicketController {
     @PostMapping
     public R<TkTicket> create(@RequestBody TkTicket ticket) {
         return R.ok(ticketService.createDraft(ticket));
+    }
+
+    @ApiOperation("主工单下可见的明细分组")
+    @GetMapping("/{id}/children")
+    public R<List<Map<String, Object>>> children(@PathVariable Long id) {
+        return R.ok(ticketService.childGroups(id));
+    }
+
+    @ApiOperation("在主工单下新增明细草稿")
+    @PostMapping("/{id}/children/{relationId}")
+    public R<TkTicket> createChild(@PathVariable Long id, @PathVariable Long relationId,
+                                    @RequestBody Map<String, Object> formData) {
+        return R.ok(ticketService.createChildDraft(id, relationId, formData));
+    }
+
+    @ApiOperation("保存主工单下的明细")
+    @PutMapping("/{id}/children/{childId}")
+    public R<TkTicket> updateChild(@PathVariable Long id, @PathVariable Long childId,
+                                    @RequestBody Map<String, Object> formData) {
+        return R.ok(ticketService.updateChild(id, childId, formData));
+    }
+
+    @ApiOperation("删除主工单下的草稿明细")
+    @DeleteMapping("/{id}/children/{childId}")
+    public R<Void> deleteChild(@PathVariable Long id, @PathVariable Long childId) {
+        ticketService.deleteChild(id, childId);
+        return R.ok();
+    }
+
+    @ApiOperation("手动提交明细并启动子流程")
+    @PostMapping("/{id}/children/{childId}/submit")
+    public R<TkTicket> submitChild(@PathVariable Long id, @PathVariable Long childId) {
+        return R.ok(ticketService.submitChild(id, childId));
     }
 
     @ApiOperation("更新草稿")
